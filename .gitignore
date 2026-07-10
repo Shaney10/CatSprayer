@@ -1,0 +1,39 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Build files
+build/
+dist/
+*.egg-info/
+
+# Test and coverage files
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime data
+data/videos/*
+data/logs/*
+data/snapshots/*
+data/favorites/*
+
+# Keep empty data directories in Git
+!data/videos/.gitkeep
+!data/logs/.gitkeep
+!data/snapshots/.gitkeep
+!data/favorites/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db
