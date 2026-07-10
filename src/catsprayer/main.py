@@ -1,12 +1,5 @@
 """
 CatSprayer Main Application
-
-Connects:
-- Sony IMX500 AI Camera
-- CatDetector
-- SprayerController
-
-Current sprayer output is simulated.
 """
 
 from __future__ import annotations
@@ -16,9 +9,12 @@ import time
 from catsprayer.imx500 import IMX500Camera
 from catsprayer.detector import CatDetector
 from catsprayer.sprayer import SprayerController
+from catsprayer.config import CONFIG
+
 
 
 def main():
+
 
     print()
     print("============================")
@@ -31,25 +27,30 @@ def main():
 
 
     detector = CatDetector(
-        confidence_threshold=0.70,
-        required_detections=5,
-        trigger_delay=1.0,
-        cooldown_time=10.0,
+        confidence_threshold=
+            CONFIG["detector"]["confidence_threshold"],
+
+        required_detections=
+            CONFIG["detector"]["required_detections"],
+
+        trigger_delay=
+            CONFIG["detector"]["trigger_delay"],
+
+        cooldown_time=
+            CONFIG["detector"]["cooldown_time"],
     )
 
 
-    sprayer = SprayerController(
-        spray_duration=1.0
-    )
+    sprayer = SprayerController()
+
 
 
     try:
 
         camera.start()
 
-
         print("Camera running")
-        print("Waiting for cat detection...")
+        print("Waiting for cat...")
         print("Press Ctrl+C to stop")
         print()
 
@@ -68,32 +69,17 @@ def main():
             if result["cat_detected"]:
 
                 print(
-                    f"Cat detected | "
-                    f"Confidence: "
-                    f"{result['confidence']:.2f} | "
-                    f"Detections: "
-                    f"{result.get('detections', 0)} | "
-                    f"Trigger: "
-                    f"{result['trigger']}"
+                    f"Cat "
+                    f"{result['confidence']:.2f} "
+                    f"Trigger={result['trigger']}"
                 )
-
-
-            else:
-
-                print(
-                    "No cat detected"
-                )
-
 
 
             if result["trigger"]:
 
-                print()
                 print(
                     ">>> SPRAYER TRIGGERED <<<"
                 )
-                print()
-
 
                 sprayer.activate()
 
@@ -106,15 +92,14 @@ def main():
     except KeyboardInterrupt:
 
         print()
-        print("Stopping CatSprayer...")
+        print("Stopping CatSprayer")
 
 
     finally:
 
         camera.stop()
 
-        print("Camera stopped")
-        print("Shutdown complete")
+        sprayer.cleanup()
 
 
 

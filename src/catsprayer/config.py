@@ -1,34 +1,33 @@
+"""
+CatSprayer Configuration Loader
+
+Loads project settings from pyproject.toml.
+"""
+
 from __future__ import annotations
 
-import json
-from typing import Any
-
-from catsprayer.paths import CONFIG_FILE
+import tomllib
+from pathlib import Path
 
 
-class Config:
-    def __init__(self) -> None:
-        if not CONFIG_FILE.exists():
-            raise FileNotFoundError(
-                f"Configuration file not found:\n{CONFIG_FILE}"
-            )
+PROJECT_ROOT = Path(__file__).parents[2]
 
-        self.reload()
+CONFIG_FILE = PROJECT_ROOT / "pyproject.toml"
 
-    def reload(self) -> None:
-        with CONFIG_FILE.open("r", encoding="utf-8") as file:
-            self._data = json.load(file)
 
-    def get(self, *keys: str, default: Any = None) -> Any:
-        value: Any = self._data
 
-        for key in keys:
-            if not isinstance(value, dict):
-                return default
+def load_config():
 
-            value = value.get(key)
+    with open(
+        CONFIG_FILE,
+        "rb"
+    ) as file:
 
-            if value is None:
-                return default
+        config = tomllib.load(file)
 
-        return value
+
+    return config["tool"]["catsprayer"]
+
+
+
+CONFIG = load_config()

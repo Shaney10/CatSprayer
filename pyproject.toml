@@ -66,3 +66,14 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.catsprayer]
+sprayer_pin = 17
+spray_duration = 1.0
+simulation = true
+
+[tool.catsprayer.detector]
+confidence_threshold = 0.70
+required_detections = 5
+trigger_delay = 1.0
+cooldown_time = 10.0
