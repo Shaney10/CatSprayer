@@ -3,31 +3,32 @@ Main entry point for CatSprayer.
 """
 
 from catsprayer.config import Config
+from catsprayer.logger import configure_logging, get_logger
 
 
 def main() -> None:
-    """Start the CatSprayer application."""
+    configure_logging()
+
+    logger = get_logger(__name__)
 
     config = Config()
 
-    print("=" * 50)
-    print("CatSprayer")
-    print("=" * 50)
+    logger.info("CatSprayer starting")
 
-    print(
-        f"Camera: "
-        f"{config.get('camera', 'width')}x"
-        f"{config.get('camera', 'height')}"
+    logger.info(
+        "Camera: %sx%s",
+        config.get("camera", "width"),
+        config.get("camera", "height"),
     )
 
-    print(
-        f"Target: "
-        f"{config.get('ai', 'target_class')}"
+    logger.info(
+        "Target: %s",
+        config.get("detection", "target_class"),
     )
 
-    print(
-        f"Confidence Threshold: "
-        f"{config.get('ai', 'confidence_threshold')}"
+    logger.info(
+        "Confidence threshold: %.2f",
+        config.get("detection", "confidence_threshold"),
     )
 
 
