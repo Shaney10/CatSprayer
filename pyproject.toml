@@ -108,3 +108,25 @@ level = "INFO"
 
 #Enable saving detection events
 enable_events = true
+
+#Video recording configuration
+[tool.catsprayer.video]
+
+#Enable video recording
+enabled = true
+
+#Folder where recordings are saved
+output_directory = "recordings"
+
+#Video format
+format = "mp4"
+
+#Recording resolution
+width = 1920
+height = 1080
+
+#Frames per second
+fps = 30
+
+#Maximum recording length (seconds)
+max_duration = 60
