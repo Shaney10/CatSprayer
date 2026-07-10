@@ -1,0 +1,21 @@
+Metadata-Version: 2.4
+Name: catsprayer
+Version: 0.1.0
+Summary: AI-powered cat deterrent using a Raspberry Pi AI Camera
+Author: Sean Haney
+License-Expression: MIT
+Keywords: raspberry-pi,computer-vision,imx500,ai-camera,gpio,cat,opencv
+Classifier: Development Status :: 3 - Alpha
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Topic :: Scientific/Engineering :: Image Recognition
+Classifier: Topic :: Home Automation
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: picamera2
+Requires-Dist: gpiozero
+Requires-Dist: numpy
+Provides-Extra: dev
+Requires-Dist: black; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: pytest; extra == "dev"

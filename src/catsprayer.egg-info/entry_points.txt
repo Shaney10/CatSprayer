@@ -1,0 +1,2 @@
+[console_scripts]
+catsprayer = catsprayer.main:main

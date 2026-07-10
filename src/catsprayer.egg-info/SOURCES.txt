@@ -1,0 +1,7 @@
+pyproject.toml
+src/catsprayer.egg-info/PKG-INFO
+src/catsprayer.egg-info/SOURCES.txt
+src/catsprayer.egg-info/dependency_links.txt
+src/catsprayer.egg-info/entry_points.txt
+src/catsprayer.egg-info/requires.txt
+src/catsprayer.egg-info/top_level.txt

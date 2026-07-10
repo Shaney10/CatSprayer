@@ -1,0 +1,8 @@
+picamera2
+gpiozero
+numpy
+
+[dev]
+black
+ruff
+pytest
