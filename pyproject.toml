@@ -1,42 +1,21 @@
-#tells Python how to build and install your project.
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
-#contains your project's metadata and runtime dependencies.
+
 [project]
 name = "catsprayer"
 version = "0.1.0"
-description = "AI-powered cat deterrent using a Raspberry Pi AI Camera"
-readme = "README.md"
+description = "AI powered cat detection and automated sprayer system"
 requires-python = ">=3.11"
-license = "MIT"
-authors = [
-    { name = "Sean Haney" }
-]
-keywords = [
-    "raspberry-pi",
-    "computer-vision",
-    "imx500",
-    "ai-camera",
-    "gpio",
-    "cat",
-    "opencv"
-]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3",
-    "Operating System :: POSIX :: Linux",
-    "Topic :: Scientific/Engineering :: Image Recognition",
-    "Topic :: Home Automation"
-]
 
 dependencies = [
-    "gpiozero",
-    "numpy"
+    "picamera2",
+    "numpy",
+    "lgpio"
 ]
 
-#defines tools used during development (formatting, linting, testing).
+
 [project.optional-dependencies]
 dev = [
     "black",
@@ -44,36 +23,88 @@ dev = [
     "pytest"
 ]
 
+
 #creates a catsprayer command that will run main() once the project is installed.
 [project.scripts]
 catsprayer = "catsprayer.main:main"
+
 
 #tells setuptools to use the src/ layout.
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
 
 #[tool.black] and [tool.ruff] configure code formatting and linting so the whole project stays consistent.
 [tool.black]
 line-length = 88
 target-version = ["py311"]
 
+
 [tool.ruff]
 line-length = 88
 target-version = "py311"
 
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[tool.catsprayer]
-sprayer_pin = 17
-spray_duration = 1.0
-simulation = true
 
+
+#CatSprayer hardware configuration
+[tool.catsprayer]
+
+#Raspberry Pi GPIO pin connected to the sprayer driver circuit
+sprayer_pin = 17
+
+#true = software simulation mode
+#false = use Raspberry Pi GPIO output
+simulation = false
+
+#Amount of time the sprayer remains active (seconds)
+spray_duration = 1.0
+
+
+
+#AI detection configuration
 [tool.catsprayer.detector]
+
+#Minimum confidence value required from the AI model
 confidence_threshold = 0.70
+
+#Number of consecutive detections required before triggering
 required_detections = 5
+
+#Amount of time a cat must remain detected before activation
 trigger_delay = 1.0
+
+#Minimum time between spray activations
 cooldown_time = 10.0
+
+
+
+#Camera configuration
+[tool.catsprayer.camera]
+
+#Main camera display resolution
+width = 1920
+height = 1080
+
+#IMX500 neural network input resolution
+ai_width = 320
+ai_height = 320
+
+
+
+#Application logging configuration
+[tool.catsprayer.logging]
+
+#Logging level options:
+#DEBUG, INFO, WARNING, ERROR
+level = "INFO"
+
+#Enable saving detection events
+enable_events = true
