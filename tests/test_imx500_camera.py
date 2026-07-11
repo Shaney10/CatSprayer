@@ -12,7 +12,7 @@ Press Q to quit.
 
 import cv2
 
-from src.catsprayer.imx500 import IMX500Camera
+from catsprayer.imx500 import IMX500Camera
 
 
 def main():
