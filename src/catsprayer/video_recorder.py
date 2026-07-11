@@ -5,11 +5,12 @@ Uses Picamera2 video recording.
 Supports multiple recordings.
 """
 
-from pathlib import Path
 import time
 
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FfmpegOutput
+
+from catsprayer.paths import VIDEOS_DIR
 
 
 
@@ -19,14 +20,13 @@ class VideoRecorder:
     def __init__(
         self,
         camera,
-        output_directory="recordings",
+        output_directory=VIDEOS_DIR,
     ):
 
         self.camera = camera.picam2
 
-        self.output_directory = Path(
-            output_directory
-        )
+        self.output_directory = output_directory
+
 
         self.output_directory.mkdir(
             exist_ok=True
