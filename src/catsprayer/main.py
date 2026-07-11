@@ -9,12 +9,12 @@ import time
 from catsprayer.imx500 import IMX500Camera
 from catsprayer.detector import CatDetector
 from catsprayer.sprayer import SprayerController
+from catsprayer.event_recorder import EventRecorder
 from catsprayer.config import CONFIG
 
 
 
 def main():
-
 
     print()
     print("============================")
@@ -44,6 +44,11 @@ def main():
     sprayer = SprayerController()
 
 
+    event_recorder = EventRecorder(
+        camera
+    )
+
+
 
     try:
 
@@ -66,6 +71,20 @@ def main():
             )
 
 
+            #
+            # Video recording follows cat presence
+            #
+
+            event_recorder.update(
+                result["cat_detected"]
+            )
+
+
+
+            #
+            # Display detection information
+            #
+
             if result["cat_detected"]:
 
                 print(
@@ -74,6 +93,11 @@ def main():
                     f"Trigger={result['trigger']}"
                 )
 
+
+
+            #
+            # LED / sprayer trigger
+            #
 
             if result["trigger"]:
 
@@ -95,7 +119,10 @@ def main():
         print("Stopping CatSprayer")
 
 
+
     finally:
+
+        event_recorder.cleanup()
 
         camera.stop()
 
