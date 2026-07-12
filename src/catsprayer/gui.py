@@ -5,12 +5,23 @@ CatSprayer Graphical User Interface Dashboard
 from __future__ import annotations
 
 import os
+import sys
 import time
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk, messagebox
 import cv2
 from PIL import Image, ImageTk
 
+# =====================================================================
+# ROBUST PATH RESOLUTION (PyInstaller Environment Support)
+# =====================================================================
+if getattr(sys, 'frozen', False):
+    # Running inside a bundled PyInstaller executable environment
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    # Running inside a standard local development Python environment
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 class CatSprayerGUI:
 
@@ -21,8 +32,8 @@ class CatSprayerGUI:
         self.sprayer = sprayer
         self.event_recorder = event_recorder
 
-        # Config paths
-        self.video_dir = "data/videos"
+        # Config paths absolute to project runtime root
+        self.video_dir = os.path.join(str(BASE_DIR), "data", "videos")
         os.makedirs(self.video_dir, exist_ok=True)
 
         # Application State
@@ -62,6 +73,9 @@ class CatSprayerGUI:
         # Keyboard short-circuit listeners
         self.root.bind("<q>", lambda e: self.quit_application())
         self.root.bind("<Escape>", lambda e: self.quit_application())
+
+        # Force Tkinter to map layout geometries before starting threads
+        self.root.update_idletasks()
 
         # Start background file scanning logic alongside the frame processor
         self.video_watcher_loop()
@@ -502,6 +516,7 @@ class CatSprayerGUI:
             self.cap = None
 
     def update_loop(self):
+        # Execute active background hardware processes
         detections = self.camera.get_detections()
         result = self.detector.process(detections)
         self.event_recorder.update(result["cat_detected"])
@@ -520,6 +535,7 @@ class CatSprayerGUI:
                 self.status_title.config(text="SYSTEM ONLINE", fg="#4CAF50")
                 self.status_desc.config(text="Mode: Live Feed Tracking")
 
+            # FETCH LIVE CAMERA HARDWARE INTERFACE FRAME
             frame = self.camera.get_annotated_frame()
 
         else:
@@ -567,16 +583,20 @@ class CatSprayerGUI:
             canvas_w = self.video_label.winfo_width()
             canvas_h = self.video_label.winfo_height()
 
-            if canvas_w > 10 and canvas_h > 10:
-                img_pil = Image.fromarray(frame_rgb)
-                img_pil = img_pil.resize((canvas_w, canvas_h), Image.Resampling.LANCZOS)
-                img_tk = ImageTk.PhotoImage(image=img_pil)
+            # Dynamic structural rendering fallback check
+            if canvas_w <= 10 or canvas_h <= 10:
+                canvas_w, canvas_h = 800, 600
 
-                self.video_label.img_tk = img_tk
-                self.video_label.config(image=img_tk)
+            img_pil = Image.fromarray(frame_rgb)
+            img_pil = img_pil.resize((canvas_w, canvas_h), Image.Resampling.LANCZOS)
+            img_tk = ImageTk.PhotoImage(image=img_pil)
+
+            self.video_label.img_tk = img_tk
+            self.video_label.config(image=img_tk)
 
         self.root.after(33, self.update_loop)
 
     def quit_application(self):
         self._close_file_capture()
         self.root.destroy()
+        sys.exit(0)
