@@ -10,7 +10,8 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 
 # Check if running inside a compiled PyInstaller bundle
 if getattr(sys, 'frozen', False):
-    # Force project root to point to your permanent user home directory path
+    # PyInstaller splits files into an '_internal' directory in multi-file mode.
+    # We explicitly anchor all dynamic data storage directly to your permanent user home directory.
     PROJECT_ROOT = Path("/home/haney/CatSprayer")
 else:
     # Standard local development fallback
