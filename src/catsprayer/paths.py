@@ -2,13 +2,19 @@
 Common filesystem paths for the CatSprayer project.
 """
 
+import sys
 from pathlib import Path
 
-# src/catsprayer/
+# Identify where the actual python files or binary structures live
 PACKAGE_DIR = Path(__file__).resolve().parent
 
-# CatSprayer/
-PROJECT_ROOT = PACKAGE_DIR.parent.parent
+# Check if running inside a compiled PyInstaller bundle
+if getattr(sys, 'frozen', False):
+    # Force project root to point to your permanent user home directory path
+    PROJECT_ROOT = Path("/home/haney/CatSprayer")
+else:
+    # Standard local development fallback
+    PROJECT_ROOT = PACKAGE_DIR.parent.parent
 
 CONFIG_DIR = PROJECT_ROOT / "config"
 DATA_DIR = PROJECT_ROOT / "data"
