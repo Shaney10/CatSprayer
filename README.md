@@ -19,6 +19,7 @@ The CatSprayer Intelligent GUI Dashboard coordinates an advanced detection syste
 1. Clone the project repository into your home directory:
    ```bash
    git clone <your-repo-link> ~/CatSprayer
+   git clone https://github.com/Shaney10/CatSprayer.git ~/CatSprayer
 
 Navigate into the workspace folder:
 
@@ -88,8 +89,6 @@ This project is licensed under the [NAME HERE] License - see the LICENSE.md file
 
 Acknowledgments
 Raspberry Pi AI Module Camera framework documentation
-
-awesome-readme
 
 
 
