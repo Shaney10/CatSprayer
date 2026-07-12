@@ -7,21 +7,16 @@ from __future__ import annotations
 import os
 import sys
 import time
+import threading
+import queue
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox
 import cv2
 from PIL import Image, ImageTk
 
-# =====================================================================
-# ROBUST PATH RESOLUTION (PyInstaller Environment Support)
-# =====================================================================
-if getattr(sys, 'frozen', False):
-    # Running inside a bundled PyInstaller executable environment
-    BASE_DIR = Path(sys._MEIPASS)
-else:
-    # Running inside a standard local development Python environment
-    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+# Import our unified path rule from the paths system
+from catsprayer.paths import VIDEOS_DIR
 
 class CatSprayerGUI:
 
@@ -32,19 +27,28 @@ class CatSprayerGUI:
         self.sprayer = sprayer
         self.event_recorder = event_recorder
 
-        # Config paths absolute to project runtime root
-        self.video_dir = os.path.join(str(BASE_DIR), "data", "videos")
+        # Config paths absolute to project runtime root (using centralized paths module)
+        self.video_dir = VIDEOS_DIR
         os.makedirs(self.video_dir, exist_ok=True)
 
         # Application State
         self.current_mode = "LIVE"
         self.current_playback_file = None
-        self.cap = None  # cv2.VideoCapture reference
+        self.cap = None
         
         # New Feature State Tracking
         self.is_looping_new_clip = False
         self.delete_timer_id = None
         self.delete_countdown_ticks = 0
+
+        # Threading Shared State Cache
+        self.running = True
+        self.hardware_state = {
+            "cat_detected": False,
+            "confidence": 0.0,
+            "live_frame": None
+        }
+        self.state_lock = threading.Lock()
 
         # Set up window layout
         self.root.title("CatSprayer Intelligent Dashboard")
@@ -77,14 +81,16 @@ class CatSprayerGUI:
         # Force Tkinter to map layout geometries before starting threads
         self.root.update_idletasks()
 
-        # Start background file scanning logic alongside the frame processor
+        # Start the background hardware thread
+        self.hardware_thread = threading.Thread(target=self._hardware_worker_loop, daemon=True)
+        self.hardware_thread.start()
+
+        # Start background UI loops
         self.video_watcher_loop()
         self.update_loop()
 
     def _build_sidebar_widgets(self):
-        # ----------------------------------------------------
         # BOTTOM ANCHORS FIRST (Forces them into view)
-        # ----------------------------------------------------
         self.context_frame = tk.Frame(self.sidebar, bg="#2d2d2d")
         self.context_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=(5, 15))
 
@@ -136,9 +142,7 @@ class CatSprayerGUI:
         self.btn_delete_hold.bind("<ButtonPress-1>", self._on_delete_press)
         self.btn_delete_hold.bind("<ButtonRelease-1>", self._on_delete_release)
 
-        # ----------------------------------------------------
         # TOP ANCHORS SECOND (Fills out upper space remaining)
-        # ----------------------------------------------------
         self.status_frame = tk.Frame(self.sidebar, bg="#3d3d3d", height=70)
         self.status_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
 
@@ -278,6 +282,8 @@ class CatSprayerGUI:
             self.listbox.insert(tk.END, display_name)
 
     def video_watcher_loop(self):
+        if not self.running:
+            return
         try:
             if os.path.exists(self.video_dir):
                 new_clips = [f for f in os.listdir(self.video_dir) if f.endswith("_new.mp4")]
@@ -377,7 +383,17 @@ class CatSprayerGUI:
         filepath = os.path.join(self.video_dir, filename)
 
         self._close_file_capture()
-        self.cap = cv2.VideoCapture(filepath)
+        
+        old_ld_path = os.environ.get('LD_LIBRARY_PATH')
+        if getattr(sys, 'frozen', False) and 'LD_LIBRARY_PATH_ORIG' in os.environ:
+            os.environ['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH_ORIG']
+            
+        try:
+            self.cap = cv2.VideoCapture(filepath)
+        finally:
+            if old_ld_path is not None:
+                os.environ['LD_LIBRARY_PATH'] = old_ld_path
+
         self.current_playback_file = filepath
         self._show_appropriate_controls()
 
@@ -515,31 +531,57 @@ class CatSprayerGUI:
             self.cap.release()
             self.cap = None
 
-    def update_loop(self):
-        # Execute active background hardware processes
-        detections = self.camera.get_detections()
-        result = self.detector.process(detections)
-        self.event_recorder.update(result["cat_detected"])
+    def _hardware_worker_loop(self):
+        """Background worker thread dedicated solely to processing pipeline hardware tasks."""
+        while self.running:
+            try:
+                detections = self.camera.get_detections()
+                result = self.detector.process(detections)
+                self.event_recorder.update(result["cat_detected"])
 
-        if result["trigger"]:
-            print(">>> SPRAYER TRIGGERED <<<")
-            self.sprayer.activate()
+                if result["trigger"]:
+                    print(">>> SPRAYER TRIGGERED <<<")
+                    self.sprayer.activate()
+
+                live_frame = self.camera.get_annotated_frame()
+
+                with self.state_lock:
+                    self.hardware_state["cat_detected"] = result["cat_detected"]
+                    self.hardware_state["confidence"] = result.get("confidence", 0.0)
+                    self.hardware_state["live_frame"] = live_frame
+
+            except Exception as e:
+                print(f"Error in hardware background thread: {e}")
+            
+            # Tiny sleep interval ensures the thread doesn't hog the CPU core completely
+            time.sleep(0.01)
+
+    def update_loop(self):
+        """Lightweight UI draw loop running on the main Tkinter thread."""
+        if not self.running:
+            return
+
+        # 1. Fetch values safely from the cache
+        with self.state_lock:
+            cat_detected = self.hardware_state["cat_detected"]
+            confidence = self.hardware_state["confidence"]
+            live_frame = self.hardware_state["live_frame"]
 
         frame = None
 
+        # 2. Assign or process frame selection based on mode
         if self.current_mode == "LIVE":
-            if result["cat_detected"]:
+            if cat_detected:
                 self.status_title.config(text="⚠️ CAT SPOTTED ⚠️", fg="#FF5252")
-                self.status_desc.config(text=f"Confidence: {result['confidence']:.2f}")
+                self.status_desc.config(text=f"Confidence: {confidence:.2f}")
             else:
                 self.status_title.config(text="SYSTEM ONLINE", fg="#4CAF50")
                 self.status_desc.config(text="Mode: Live Feed Tracking")
 
-            # FETCH LIVE CAMERA HARDWARE INTERFACE FRAME
-            frame = self.camera.get_annotated_frame()
+            frame = live_frame
 
         else:
-            if result["cat_detected"]:
+            if cat_detected:
                 self.status_title.config(text="⚠️ CAT DETECTED IN YARD ⚠️", fg="#FF5252")
                 self.status_desc.config(text="Background monitoring active!")
             else:
@@ -578,12 +620,12 @@ class CatSprayerGUI:
                                 self.listbox.see(0)
                                 self.on_clip_selected(None)
 
+        # 3. Handle Tkinter image compilation and frame drawing
         if frame is not None:
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             canvas_w = self.video_label.winfo_width()
             canvas_h = self.video_label.winfo_height()
 
-            # Dynamic structural rendering fallback check
             if canvas_w <= 10 or canvas_h <= 10:
                 canvas_w, canvas_h = 800, 600
 
@@ -597,6 +639,7 @@ class CatSprayerGUI:
         self.root.after(33, self.update_loop)
 
     def quit_application(self):
+        self.running = False
         self._close_file_capture()
         self.root.destroy()
         sys.exit(0)

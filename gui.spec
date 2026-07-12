@@ -19,6 +19,7 @@ a = Analysis(
         (os.path.join(BASE_DIR, 'data'), 'data'),
         (os.path.join(BASE_DIR, 'pyproject.toml'), '.'),  # Single, clean root location
     ],
+
     hiddenimports=[
         'catsprayer.detector',
         'catsprayer.sprayer',
@@ -27,8 +28,10 @@ a = Analysis(
         'catsprayer.gui',
         'catsprayer.camera',
         'catsprayer.imx500',
-        'PIL._tkinter_finder'
+        'PIL._tkinter_finder',
+        'cv2',
     ],
+
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

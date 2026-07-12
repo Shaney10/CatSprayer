@@ -73,7 +73,7 @@ spray_duration = 1.0
 [tool.catsprayer.detector]
 
 #Minimum confidence value required from the AI model
-confidence_threshold = 0.70
+confidence_threshold = 0.65
 
 #Number of consecutive detections required before triggering
 required_detections = 5
