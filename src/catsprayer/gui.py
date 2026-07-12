@@ -64,7 +64,8 @@ class CatSprayerGUI:
         self.root.bind("<q>", lambda e: self.quit_application())
         self.root.bind("<Escape>", lambda e: self.quit_application())
 
-        # Start processing runtime
+        # Start background file scanning logic alongside the frame processor
+        self.video_watcher_loop()
         self.update_loop()
 
     def _build_sidebar_widgets(self):
@@ -246,8 +247,30 @@ class CatSprayerGUI:
             display_name = filename.replace("recording_", "").replace(".mp4", "")
             if is_fav:
                 display_name = f"⭐ {display_name.replace('_fav', '')}"
+            elif "_new" in filename:
+                display_name = f"🆕 {display_name.replace('_new', '')}"
 
             self.listbox.insert(tk.END, display_name)
+
+    def video_watcher_loop(self):
+        """Asynchronous folder scanning loop looking explicitly for completed '_new.mp4' files."""
+        try:
+            if os.path.exists(self.video_dir) and self.current_mode == "LIVE":
+                # Find any file containing '_new.mp4'
+                new_clips = [f for f in os.listdir(self.video_dir) if f.endswith("_new.mp4")]
+                
+                if new_clips:
+                    # Target the oldest un-reviewed video first
+                    target_file = sorted(new_clips)[0]
+                    filepath = os.path.join(self.video_dir, target_file)
+                    
+                    # Intercept the pipeline and review immediately
+                    self.trigger_new_clip_review(filepath)
+        except Exception as e:
+            print(f"Error inside video notification engine: {e}")
+            
+        # Poll folder environment every 1.5 seconds
+        self.root.after(1500, self.video_watcher_loop)
 
     def trigger_new_clip_review(self, filepath: str):
         """External pipeline attachment hook. Call this when a fresh alert video finishes saving."""
@@ -320,12 +343,18 @@ class CatSprayerGUI:
         self.is_looping_new_clip = False
 
         selected_text = self.listbox.get(selection[0])
-        clean_name = selected_text.replace("⭐ ", "")
+        clean_name = selected_text.replace("⭐ ", "").replace("🆕 ", "")
+        
+        # Look for the absolute path on disk regardless of the display badge
         if "⭐" in selected_text:
             filename = f"recording_{clean_name}_fav.mp4"
+        elif "🆕" in selected_text:
+            filename = f"recording_{clean_name}_new.mp4"
         else:
             if os.path.exists(os.path.join(self.video_dir, f"recording_{clean_name}_fav.mp4")):
                 filename = f"recording_{clean_name}_fav.mp4"
+            elif os.path.exists(os.path.join(self.video_dir, f"recording_{clean_name}_new.mp4")):
+                filename = f"recording_{clean_name}_new.mp4"
             else:
                 filename = f"recording_{clean_name}.mp4"
 
@@ -338,20 +367,33 @@ class CatSprayerGUI:
 
     # --- REVIEW ACTION PANEL BUTTON STRATEGIES ---
     def action_keep(self):
-        """Accepts the clip, updates list metadata, and reverts back to live monitoring."""
+        """Accepts the clip, strips the '_new' flag, and reverts back to live monitoring."""
+        if self.current_playback_file and os.path.exists(self.current_playback_file):
+            if "_new.mp4" in self.current_playback_file:
+                new_filepath = self.current_playback_file.replace("_new.mp4", ".mp4")
+                try:
+                    self._close_file_capture()
+                    os.rename(self.current_playback_file, new_filepath)
+                except Exception as e:
+                    print(f"Error keeping file: {e}")
         self.set_mode_live()
 
     def action_favorite_and_keep(self):
-        """Appends the favorite signature to disk right away, then steps safely to live view."""
+        """Appends the favorite signature to disk right away, dropping the '_new' tag."""
         if self.current_playback_file and os.path.exists(self.current_playback_file):
             directory, old_filename = os.path.split(self.current_playback_file)
-            if "_fav" not in old_filename:
+            if "_new.mp4" in old_filename:
+                new_filename = old_filename.replace("_new.mp4", "_fav.mp4")
+            elif "_fav" not in old_filename:
                 new_filename = old_filename.replace(".mp4", "_fav.mp4")
-                try:
-                    self._close_file_capture()
-                    os.rename(self.current_playback_file, os.path.join(directory, new_filename))
-                except Exception as e:
-                    print(f"Error favoriting: {e}")
+            else:
+                new_filename = old_filename
+
+            try:
+                self._close_file_capture()
+                os.rename(self.current_playback_file, os.path.join(directory, new_filename))
+            except Exception as e:
+                print(f"Error favoriting: {e}")
         self.set_mode_live()
 
     def action_immediate_delete(self):
@@ -365,7 +407,7 @@ class CatSprayerGUI:
         self.set_mode_live()
 
     def action_decide_later(self):
-        """Leaves file metadata completely untouched and simply clears the display mode."""
+        """Leaves file metadata completely untouched (retains '_new') and drops review focus."""
         self.set_mode_live()
 
     # --- THREE-SECOND HOLD SUSTAINED ACTION TIMERS ---
@@ -424,6 +466,8 @@ class CatSprayerGUI:
 
         if "_fav" in old_filename:
             new_filename = old_filename.replace("_fav", "")
+        elif "_new" in old_filename:
+            new_filename = old_filename.replace("_new", "_fav")
         else:
             new_filename = old_filename.replace(".mp4", "_fav.mp4")
 

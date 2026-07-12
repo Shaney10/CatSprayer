@@ -35,8 +35,8 @@ class VideoRecorder:
             print("Already recording!")
             return
 
-        # Generates a brand new unique filename using the current epoch timestamp
-        filename = f"recording_{int(time.time())}.mp4"
+        # Generates a brand new unique filename using the current epoch timestamp with _new suffix
+        filename = f"recording_{int(time.time())}_new.mp4"
         filepath = os.path.join(self.output_dir, filename)
         print(f"Recording started: {filepath}")
 
