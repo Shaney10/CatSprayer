@@ -42,6 +42,9 @@ def main():
         required_detections=CONFIG["detector"]["required_detections"],
         trigger_delay=CONFIG["detector"]["trigger_delay"],
         cooldown_time=CONFIG["detector"]["cooldown_time"],
+        trigger_zone=tuple(CONFIG["detector"]["trigger_zone"]),
+        frame_width=CONFIG["camera"]["width"],
+        frame_height=CONFIG["camera"]["height"],
     )
 
     sprayer = SprayerController()

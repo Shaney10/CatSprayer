@@ -84,6 +84,12 @@ trigger_delay = 0.0
 #Minimum time between spray activations
 cooldown_time = 0.5
 
+#Spray trigger zone: [x1, y1, x2, y2], normalized 0.0-1.0 as a fraction
+#of the frame width/height. Only cats centered inside this box count
+#toward triggering the sprayer. Editable live from the GUI's
+#"Edit Spray Zone" control; this is just the value used on startup.
+#trigger_zone = [0.30, 0.30, 0.70, 0.70]
+trigger_zone = [0.10, 0.10, 0.60, 0.90]
 
 
 #Camera configuration

@@ -13,7 +13,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox
 import cv2
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 
 # Import our unified path rule from the paths system
 from catsprayer.paths import VIDEOS_DIR
@@ -46,9 +46,22 @@ class CatSprayerGUI:
         self.hardware_state = {
             "cat_detected": False,
             "confidence": 0.0,
-            "live_frame": None
+            "live_frame": None,
+            "in_zone": False,
         }
         self.state_lock = threading.Lock()
+
+        # Spray Trigger Zone (normalized 0.0-1.0 fraction of frame: x1, y1, x2, y2).
+        # Only cats centered inside this box are eligible to trigger the sprayer.
+        # Source of truth on startup is whatever the detector was constructed
+        # with (see pyproject.toml [tool.catsprayer.detector] trigger_zone);
+        # only fall back to a hardcoded default if the detector has none.
+        self.trigger_zone = self.detector.trigger_zone or (0.30, 0.30, 0.70, 0.70)
+        if self.detector.trigger_zone is None:
+            self.detector.set_trigger_zone(self.trigger_zone)
+        self.zone_edit_mode = False
+        self._zone_drag_start_px = None
+        self._zone_drag_current_px = None
 
         # Set up window layout
         self.root.title("CatSprayer Intelligent Dashboard")
@@ -67,6 +80,10 @@ class CatSprayerGUI:
 
         self.video_label = tk.Label(self.video_container, bg="#111111")
         self.video_label.pack(fill=tk.BOTH, expand=True)
+
+        self.video_label.bind("<ButtonPress-1>", self._on_zone_press)
+        self.video_label.bind("<B1-Motion>", self._on_zone_drag)
+        self.video_label.bind("<ButtonRelease-1>", self._on_zone_release)
 
         # Right Container (Control Sidebar)
         self.sidebar = tk.Frame(self.main_pane, bg="#2d2d2d", width=350)
@@ -212,6 +229,16 @@ class CatSprayerGUI:
         )
         self.btn_queue.pack(side=tk.TOP, fill=tk.X, padx=15, pady=2)
 
+        self.btn_zone_edit = tk.Button(
+            self.sidebar,
+            text="🎯 Edit Spray Zone",
+            font=("Arial", 11),
+            bg="#37474F",
+            fg="white",
+            command=self.toggle_zone_edit_mode,
+        )
+        self.btn_zone_edit.pack(side=tk.TOP, fill=tk.X, padx=15, pady=(2, 8))
+
         tk.Label(
             self.sidebar,
             text="RECORDED CLIPS",
@@ -241,6 +268,53 @@ class CatSprayerGUI:
 
         self.refresh_video_list()
         self._show_appropriate_controls()
+
+    def toggle_zone_edit_mode(self):
+        self.zone_edit_mode = not self.zone_edit_mode
+        if self.zone_edit_mode:
+            self.btn_zone_edit.config(text="🎯 Drag on video, then release", bg="#F9A825", fg="black")
+        else:
+            self.btn_zone_edit.config(text="🎯 Edit Spray Zone", bg="#37474F", fg="white")
+            self._zone_drag_start_px = None
+            self._zone_drag_current_px = None
+
+    def _on_zone_press(self, event):
+        if not self.zone_edit_mode:
+            return
+        self._zone_drag_start_px = (event.x, event.y)
+        self._zone_drag_current_px = (event.x, event.y)
+
+    def _on_zone_drag(self, event):
+        if not self.zone_edit_mode or self._zone_drag_start_px is None:
+            return
+        self._zone_drag_current_px = (event.x, event.y)
+
+    def _on_zone_release(self, event):
+        if not self.zone_edit_mode or self._zone_drag_start_px is None:
+            return
+
+        x0, y0 = self._zone_drag_start_px
+        x1, y1 = event.x, event.y
+        self._zone_drag_start_px = None
+        self._zone_drag_current_px = None
+
+        w = self.video_label.winfo_width()
+        h = self.video_label.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+
+        # Normalize, order so (x1,y1) is top-left, and clamp to [0, 1]
+        nx1, nx2 = sorted((x0 / w, x1 / w))
+        ny1, ny2 = sorted((y0 / h, y1 / h))
+        nx1, nx2 = max(0.0, min(1.0, nx1)), max(0.0, min(1.0, nx2))
+        ny1, ny2 = max(0.0, min(1.0, ny1)), max(0.0, min(1.0, ny2))
+
+        # Ignore accidental taps / drags too small to be a real box
+        if (nx2 - nx1) < 0.03 or (ny2 - ny1) < 0.03:
+            return
+
+        self.trigger_zone = (nx1, ny1, nx2, ny2)
+        self.detector.set_trigger_zone(self.trigger_zone)
 
     def _show_appropriate_controls(self):
         self.review_panel.pack_forget()
@@ -553,12 +627,34 @@ class CatSprayerGUI:
                     self.hardware_state["cat_detected"] = result["cat_detected"]
                     self.hardware_state["confidence"] = result.get("confidence", 0.0)
                     self.hardware_state["live_frame"] = live_frame
+                    self.hardware_state["in_zone"] = result.get("in_zone", False)
 
             except Exception as e:
                 print(f"Error in hardware background thread: {e}")
             
             # Tiny sleep interval ensures the thread doesn't hog the CPU core completely
             time.sleep(0.01)
+
+    def _draw_trigger_zone(self, img_pil, canvas_w, canvas_h, in_zone):
+        draw = ImageDraw.Draw(img_pil)
+
+        if self.zone_edit_mode and self._zone_drag_start_px is not None and self._zone_drag_current_px is not None:
+            # Live preview of the box currently being dragged out.
+            x0, y0 = self._zone_drag_start_px
+            x1, y1 = self._zone_drag_current_px
+            box_px = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+            color = "#FFEB3B"
+        else:
+            zx1, zy1, zx2, zy2 = self.trigger_zone
+            box_px = (zx1 * canvas_w, zy1 * canvas_h, zx2 * canvas_w, zy2 * canvas_h)
+            if self.zone_edit_mode:
+                color = "#FFEB3B"
+            elif in_zone:
+                color = "#00E676"
+            else:
+                color = "#00E5FF"
+
+        draw.rectangle(box_px, outline=color, width=3)
 
     def update_loop(self):
         """Lightweight UI draw loop running on the main Tkinter thread."""
@@ -570,6 +666,7 @@ class CatSprayerGUI:
             cat_detected = self.hardware_state["cat_detected"]
             confidence = self.hardware_state["confidence"]
             live_frame = self.hardware_state["live_frame"]
+            in_zone = self.hardware_state.get("in_zone", False)
 
         frame = None
 
@@ -635,6 +732,10 @@ class CatSprayerGUI:
 
             img_pil = Image.fromarray(frame_rgb)
             img_pil = img_pil.resize((canvas_w, canvas_h), Image.Resampling.LANCZOS)
+
+            if self.current_mode == "LIVE":
+                self._draw_trigger_zone(img_pil, canvas_w, canvas_h, in_zone)
+
             img_tk = ImageTk.PhotoImage(image=img_pil)
 
             self.video_label.img_tk = img_tk
