@@ -65,7 +65,7 @@ sprayer_pin = 17
 simulation = false
 
 #Amount of time the sprayer remains active (seconds)
-spray_duration = 1.0
+spray_duration = 0.5
 
 
 
@@ -76,13 +76,13 @@ spray_duration = 1.0
 confidence_threshold = 0.65
 
 #Number of consecutive detections required before triggering
-required_detections = 5
+required_detections = 2
 
 #Amount of time a cat must remain detected before activation
-trigger_delay = 1.0
+trigger_delay = 0.0
 
 #Minimum time between spray activations
-cooldown_time = 10.0
+cooldown_time = 0.5
 
 
 

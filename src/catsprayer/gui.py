@@ -456,12 +456,16 @@ class CatSprayerGUI:
             self.delete_timer_id = self.root.after(1000, self._tick_delete_timer)
         else:
             self.delete_timer_id = None
+            self._reset_delete_button_visual()
             self._execute_confirmed_deletion()
 
     def _on_delete_release(self, event):
         if self.delete_timer_id is not None:
             self.root.after_cancel(self.delete_timer_id)
             self.delete_timer_id = None
+        self._reset_delete_button_visual()
+
+    def _reset_delete_button_visual(self):
         self.btn_delete_hold.config(bg="#b71c1c", text="⚠️ Hold 3s to Delete")
 
     def _execute_confirmed_deletion(self):
