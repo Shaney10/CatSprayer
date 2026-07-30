@@ -29,7 +29,8 @@ class CatDetector:
         required_detections: int = 5,
         trigger_delay: float = 1.0,
         cooldown_time: float = 10.0,
-        trigger_zone: tuple[float, float, float, float] | None = None,
+        trigger_zones: list[tuple[float, float, float, float]] | None = None,
+        exclusion_zones: list[tuple[float, float, float, float]] | None = None,
         frame_width: int = 1920,
         frame_height: int = 1080,
     ):
@@ -45,17 +46,21 @@ class CatDetector:
         # Prevent repeated spraying
         self.cooldown_time = cooldown_time
 
-        # Optional rectangle (x1, y1, x2, y2), normalized 0.0-1.0 as a
-        # fraction of frame width/height. If set, only cats whose detection
-        # box is centered inside this zone count toward triggering the
-        # sprayer. None (the default) means the whole frame is eligible.
-        self.trigger_zone = trigger_zone
+        # Zones are rectangles (x1, y1, x2, y2), normalized 0.0-1.0 as a
+        # fraction of frame width/height.
+        #
+        # A cat is eligible to trigger the sprayer if its detection box is
+        # centered inside at least one trigger zone (or there are NO trigger
+        # zones defined at all, meaning the whole frame counts), AND it is
+        # NOT centered inside any exclusion zone. Exclusion always wins.
+        self.trigger_zones = list(trigger_zones) if trigger_zones else []
+        self.exclusion_zones = list(exclusion_zones) if exclusion_zones else []
 
         # Detection boxes arrive as absolute pixel coordinates in this
         # resolution (see IMX500Camera.get_detections(), which calls
         # convert_inference_coords() to produce 1920x1080-space pixels).
         # These must match the camera's actual main-stream size, since
-        # they're used to normalize boxes before comparing to trigger_zone.
+        # they're used to normalize boxes before comparing to zones.
         self.frame_width = frame_width
         self.frame_height = frame_height
 
@@ -65,43 +70,87 @@ class CatDetector:
         self.last_trigger_time = 0
 
 
-    def set_trigger_zone(
+    def set_zones(
         self,
-        zone: tuple[float, float, float, float] | None
+        trigger_zones: list[tuple[float, float, float, float]],
+        exclusion_zones: list[tuple[float, float, float, float]],
     ) -> None:
         """
-        Update the trigger zone at runtime (e.g. when the user repositions
-        the box in the GUI). Passing None disables the zone restriction.
-        Also resets in-progress detection counting, since a moved zone
-        invalidates any streak that was building up under the old one.
+        Replace the full set of trigger/exclusion zones at once (e.g. on
+        startup, loading from config). Resets in-progress detection
+        counting, since changed zones invalidate any streak building up
+        under the old ones.
         """
 
-        self.trigger_zone = zone
+        self.trigger_zones = list(trigger_zones)
+        self.exclusion_zones = list(exclusion_zones)
         self.detection_count = 0
         self.cat_start_time = None
 
 
-    def _center_in_zone(
+    def add_trigger_zone(self, zone: tuple[float, float, float, float]) -> None:
+        self.trigger_zones.append(zone)
+        self.detection_count = 0
+        self.cat_start_time = None
+
+
+    def add_exclusion_zone(self, zone: tuple[float, float, float, float]) -> None:
+        self.exclusion_zones.append(zone)
+        self.detection_count = 0
+        self.cat_start_time = None
+
+
+    def remove_trigger_zone(self, index: int) -> None:
+        if 0 <= index < len(self.trigger_zones):
+            del self.trigger_zones[index]
+            self.detection_count = 0
+            self.cat_start_time = None
+
+
+    def remove_exclusion_zone(self, index: int) -> None:
+        if 0 <= index < len(self.exclusion_zones):
+            del self.exclusion_zones[index]
+            self.detection_count = 0
+            self.cat_start_time = None
+
+
+    def _zone_status(
         self,
         box: tuple[float, float, float, float]
-    ) -> bool:
-        if self.trigger_zone is None:
-            return True
+    ) -> tuple[bool, list[int], list[int]]:
+        """
+        Returns (eligible, active_trigger_indices, active_exclusion_indices).
+
+        active_trigger_indices / active_exclusion_indices list which zones
+        (by index into self.trigger_zones / self.exclusion_zones) currently
+        contain the cat's center point -- used by the GUI to highlight the
+        specific zone(s) the cat is standing in.
+        """
 
         # box arrives as absolute pixel coordinates (see class docstring
         # above); normalize to a 0.0-1.0 fraction of the frame before
-        # comparing against trigger_zone, which is always normalized.
+        # comparing against zones, which are always normalized.
         x1, y1, x2, y2 = box
         cx = (x1 + x2) / 2 / self.frame_width
         cy = (y1 + y2) / 2 / self.frame_height
 
-        zx1, zy1, zx2, zy2 = self.trigger_zone
+        active_trigger_indices = [
+            i for i, (zx1, zy1, zx2, zy2) in enumerate(self.trigger_zones)
+            if zx1 <= cx <= zx2 and zy1 <= cy <= zy2
+        ]
+        active_exclusion_indices = [
+            i for i, (zx1, zy1, zx2, zy2) in enumerate(self.exclusion_zones)
+            if zx1 <= cx <= zx2 and zy1 <= cy <= zy2
+        ]
 
-        return (
-            zx1 <= cx <= zx2
-            and
-            zy1 <= cy <= zy2
-        )
+        if active_exclusion_indices:
+            eligible = False
+        elif not self.trigger_zones:
+            eligible = True
+        else:
+            eligible = bool(active_trigger_indices)
+
+        return eligible, active_trigger_indices, active_exclusion_indices
 
 
 
@@ -144,6 +193,8 @@ class CatDetector:
                 "confidence": 0,
                 "box": None,
                 "in_zone": False,
+                "active_trigger_indices": [],
+                "active_exclusion_indices": [],
             }
 
 
@@ -152,12 +203,13 @@ class CatDetector:
         # Valid cat found
         #
 
-        in_zone = self._center_in_zone(cat["box"])
+        eligible, active_trigger_indices, active_exclusion_indices = self._zone_status(cat["box"])
 
-        if not in_zone:
-            # Cat is visible but outside the trigger zone: don't let it
-            # build toward a trigger, but still report it as detected so
-            # the GUI can show the cat without implying a spray is imminent.
+        if not eligible:
+            # Cat is visible but not zone-eligible (outside all trigger
+            # zones, or inside an exclusion zone): don't let it build
+            # toward a trigger, but still report it as detected so the
+            # GUI can show the cat without implying a spray is imminent.
             self.detection_count = 0
             self.cat_start_time = None
 
@@ -170,6 +222,8 @@ class CatDetector:
                 "elapsed": 0,
                 "cooldown": False,
                 "in_zone": False,
+                "active_trigger_indices": active_trigger_indices,
+                "active_exclusion_indices": active_exclusion_indices,
             }
 
         self.detection_count += 1
@@ -243,6 +297,10 @@ class CatDetector:
             "cooldown": cooldown_active,
 
             "in_zone": True,
+
+            "active_trigger_indices": active_trigger_indices,
+
+            "active_exclusion_indices": active_exclusion_indices,
         }
 
 

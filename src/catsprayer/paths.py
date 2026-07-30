@@ -26,3 +26,7 @@ SNAPSHOTS_DIR = DATA_DIR / "snapshots"
 FAVORITES_DIR = DATA_DIR / "favorites"
 
 CONFIG_FILE = CONFIG_DIR / "config.json"
+
+# Append-only log of spray events (one JSON object per line), used to build
+# the stats view.
+EVENTS_LOG = DATA_DIR / "events.jsonl"

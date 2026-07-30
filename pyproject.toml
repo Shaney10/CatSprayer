@@ -12,7 +12,8 @@ requires-python = ">=3.11"
 dependencies = [
     "picamera2",
     "numpy",
-    "lgpio"
+    "lgpio",
+    "tomlkit"
 ]
 
 
@@ -84,12 +85,33 @@ trigger_delay = 0.0
 #Minimum time between spray activations
 cooldown_time = 0.5
 
-#Spray trigger zone: [x1, y1, x2, y2], normalized 0.0-1.0 as a fraction
-#of the frame width/height. Only cats centered inside this box count
-#toward triggering the sprayer. Editable live from the GUI's
-#"Edit Spray Zone" control; this is just the value used on startup.
-#trigger_zone = [0.30, 0.30, 0.70, 0.70]
-trigger_zone = [0.10, 0.10, 0.60, 0.90]
+#Spray zones: list of [x1, y1, x2, y2] rectangles, normalized 0.0-1.0 as a
+#fraction of frame width/height. A cat is eligible to trigger the sprayer
+#if its detection box is centered inside AT LEAST ONE spray zone (or there
+#are no spray zones at all, meaning the whole frame counts). Editable live
+#from the GUI's zone editor; this is just the value used on startup.
+spray_zones = [[0.30, 0.30, 0.70, 0.70]]
+
+#Exclusion zones: same format as spray_zones. A cat centered inside ANY
+#exclusion zone is never eligible to trigger, even if it's also inside a
+#spray zone. Exclusion always wins.
+exclusion_zones = []
+
+
+
+#Video/event recording configuration
+[tool.catsprayer.recording]
+
+#Seconds of footage to include from BEFORE the triggering detection.
+#Captured via a continuously-running in-memory ring buffer.
+pre_event_seconds = 2.0
+
+#Seconds to keep recording after the cat is no longer detected
+post_event_seconds = 5.0
+
+#Camera framerate, used to size the pre-event ring buffer correctly
+fps = 30
+
 
 
 #Camera configuration
@@ -98,41 +120,3 @@ trigger_zone = [0.10, 0.10, 0.60, 0.90]
 #Main camera display resolution
 width = 1920
 height = 1080
-
-#IMX500 neural network input resolution
-ai_width = 320
-ai_height = 320
-
-
-
-#Application logging configuration
-[tool.catsprayer.logging]
-
-#Logging level options:
-#DEBUG, INFO, WARNING, ERROR
-level = "INFO"
-
-#Enable saving detection events
-enable_events = true
-
-#Video recording configuration
-[tool.catsprayer.video]
-
-#Enable video recording
-enabled = true
-
-#Folder where recordings are saved
-output_directory = "recordings"
-
-#Video format
-format = "mp4"
-
-#Recording resolution
-width = 1920
-height = 1080
-
-#Frames per second
-fps = 30
-
-#Maximum recording length (seconds)
-max_duration = 60

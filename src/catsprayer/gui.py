@@ -17,6 +17,8 @@ from PIL import Image, ImageTk, ImageDraw
 
 # Import our unified path rule from the paths system
 from catsprayer.paths import VIDEOS_DIR
+from catsprayer.config import save_detector_settings
+from catsprayer import stats
 
 class CatSprayerGUI:
 
@@ -48,18 +50,23 @@ class CatSprayerGUI:
             "confidence": 0.0,
             "live_frame": None,
             "in_zone": False,
+            "active_trigger_indices": [],
+            "active_exclusion_indices": [],
         }
         self.state_lock = threading.Lock()
 
-        # Spray Trigger Zone (normalized 0.0-1.0 fraction of frame: x1, y1, x2, y2).
-        # Only cats centered inside this box are eligible to trigger the sprayer.
-        # Source of truth on startup is whatever the detector was constructed
-        # with (see pyproject.toml [tool.catsprayer.detector] trigger_zone);
-        # only fall back to a hardcoded default if the detector has none.
-        self.trigger_zone = self.detector.trigger_zone or (0.30, 0.30, 0.70, 0.70)
-        if self.detector.trigger_zone is None:
-            self.detector.set_trigger_zone(self.trigger_zone)
-        self.zone_edit_mode = False
+        # Spray/Exclusion Zones (each a normalized 0.0-1.0 rect x1,y1,x2,y2).
+        # A cat is eligible to trigger the sprayer if it's centered inside at
+        # least one spray zone (or there are none, meaning the whole frame
+        # counts), AND not centered inside any exclusion zone. Source of
+        # truth on startup is whatever the detector was constructed with
+        # (see pyproject.toml [tool.catsprayer.detector]).
+        self.spray_zones = list(self.detector.trigger_zones)
+        self.exclusion_zones = list(self.detector.exclusion_zones)
+        # Ordered history of ("spray"|"exclusion", zone) for the Undo button.
+        self.zone_history = []
+        # None, "spray", or "exclusion" -- which kind of zone a drag will add.
+        self.zone_edit_mode = None
         self._zone_drag_start_px = None
         self._zone_drag_current_px = None
 
@@ -229,15 +236,71 @@ class CatSprayerGUI:
         )
         self.btn_queue.pack(side=tk.TOP, fill=tk.X, padx=15, pady=2)
 
-        self.btn_zone_edit = tk.Button(
+        zone_add_row = tk.Frame(self.sidebar, bg="#2d2d2d")
+        zone_add_row.pack(side=tk.TOP, fill=tk.X, padx=15, pady=(2, 2))
+
+        self.btn_add_spray_zone = tk.Button(
+            zone_add_row,
+            text="➕ Spray Zone",
+            font=("Arial", 10),
+            bg="#37474F",
+            fg="white",
+            command=lambda: self.set_zone_edit_mode("spray"),
+        )
+        self.btn_add_spray_zone.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+        self.btn_add_exclusion_zone = tk.Button(
+            zone_add_row,
+            text="🚫 Exclusion Zone",
+            font=("Arial", 10),
+            bg="#37474F",
+            fg="white",
+            command=lambda: self.set_zone_edit_mode("exclusion"),
+        )
+        self.btn_add_exclusion_zone.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+
+        zone_manage_row = tk.Frame(self.sidebar, bg="#2d2d2d")
+        zone_manage_row.pack(side=tk.TOP, fill=tk.X, padx=15, pady=(0, 8))
+
+        self.btn_undo_zone = tk.Button(
+            zone_manage_row,
+            text="↩️ Undo Last",
+            font=("Arial", 10),
+            bg="#546E7A",
+            fg="white",
+            command=self.undo_last_zone,
+        )
+        self.btn_undo_zone.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+        self.btn_clear_zones = tk.Button(
+            zone_manage_row,
+            text="🗑️ Clear All",
+            font=("Arial", 10),
+            bg="#546E7A",
+            fg="white",
+            command=self.clear_all_zones,
+        )
+        self.btn_clear_zones.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+
+        self.btn_settings = tk.Button(
             self.sidebar,
-            text="🎯 Edit Spray Zone",
+            text="⚙️ Detector Settings",
             font=("Arial", 11),
             bg="#37474F",
             fg="white",
-            command=self.toggle_zone_edit_mode,
+            command=self.open_settings_window,
         )
-        self.btn_zone_edit.pack(side=tk.TOP, fill=tk.X, padx=15, pady=(2, 8))
+        self.btn_settings.pack(side=tk.TOP, fill=tk.X, padx=15, pady=(0, 4))
+
+        self.btn_stats = tk.Button(
+            self.sidebar,
+            text="📊 Spray Stats",
+            font=("Arial", 11),
+            bg="#37474F",
+            fg="white",
+            command=self.open_stats_window,
+        )
+        self.btn_stats.pack(side=tk.TOP, fill=tk.X, padx=15, pady=(0, 8))
 
         tk.Label(
             self.sidebar,
@@ -269,28 +332,192 @@ class CatSprayerGUI:
         self.refresh_video_list()
         self._show_appropriate_controls()
 
-    def toggle_zone_edit_mode(self):
-        self.zone_edit_mode = not self.zone_edit_mode
-        if self.zone_edit_mode:
-            self.btn_zone_edit.config(text="🎯 Drag on video, then release", bg="#F9A825", fg="black")
+    def open_settings_window(self):
+        win = tk.Toplevel(self.root)
+        win.title("Detector Settings")
+        win.configure(bg="#2d2d2d")
+        win.geometry("420x420")
+        win.transient(self.root)
+        win.grab_set()
+
+        fields = {}
+
+        def add_field(label_text, initial_value, row):
+            tk.Label(
+                win, text=label_text, font=("Arial", 11), fg="white", bg="#2d2d2d", anchor="w"
+            ).grid(row=row, column=0, sticky="w", padx=15, pady=8)
+            entry = tk.Entry(win, font=("Arial", 11), width=14)
+            entry.insert(0, str(initial_value))
+            entry.grid(row=row, column=1, sticky="w", padx=15, pady=8)
+            fields[label_text] = entry
+
+        tk.Label(
+            win, text="Detector Tuning", font=("Arial", 13, "bold"), fg="white", bg="#2d2d2d"
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
+
+        add_field("Confidence threshold (0-1)", self.detector.confidence_threshold, 1)
+        add_field("Required detections (frames)", self.detector.required_detections, 2)
+        add_field("Trigger delay (seconds)", self.detector.trigger_delay, 3)
+        add_field("Cooldown time (seconds)", self.detector.cooldown_time, 4)
+
+        tk.Label(
+            win,
+            text=f"Spray zones: {len(self.spray_zones)}   |   Exclusion zones: {len(self.exclusion_zones)}\n"
+                 "(edit zones by dragging on the live video, not here)",
+            font=("Arial", 10), fg="#AAAAAA", bg="#2d2d2d", justify="left", wraplength=380,
+        ).grid(row=5, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
+
+        status_label = tk.Label(win, text="", font=("Arial", 10), fg="#FF8A80", bg="#2d2d2d", wraplength=380, justify="left")
+        status_label.grid(row=6, column=0, columnspan=2, sticky="w", padx=15, pady=(5, 0))
+
+        def on_save():
+            try:
+                confidence_threshold = float(fields["Confidence threshold (0-1)"].get())
+                required_detections = int(fields["Required detections (frames)"].get())
+                trigger_delay = float(fields["Trigger delay (seconds)"].get())
+                cooldown_time = float(fields["Cooldown time (seconds)"].get())
+            except ValueError:
+                status_label.config(text="All fields must be numbers.")
+                return
+
+            if not (0.0 < confidence_threshold <= 1.0):
+                status_label.config(text="Confidence threshold must be between 0 and 1.")
+                return
+            if required_detections < 1:
+                status_label.config(text="Required detections must be at least 1.")
+                return
+            if trigger_delay < 0 or cooldown_time < 0:
+                status_label.config(text="Trigger delay and cooldown time can't be negative.")
+                return
+
+            try:
+                save_detector_settings({
+                    "confidence_threshold": confidence_threshold,
+                    "required_detections": required_detections,
+                    "trigger_delay": trigger_delay,
+                    "cooldown_time": cooldown_time,
+                })
+            except Exception as e:
+                status_label.config(text=f"Could not save: {e}")
+                return
+
+            win.destroy()
+            messagebox.showinfo(
+                "Settings Saved",
+                "Saved to pyproject.toml. Restart CatSprayer for the new settings to take effect.",
+            )
+
+        button_row = tk.Frame(win, bg="#2d2d2d")
+        button_row.grid(row=7, column=0, columnspan=2, pady=20)
+
+        tk.Button(
+            button_row, text="Save", font=("Arial", 11, "bold"), bg="#4CAF50", fg="white",
+            command=on_save, padx=20,
+        ).pack(side=tk.LEFT, padx=10)
+
+        tk.Button(
+            button_row, text="Cancel", font=("Arial", 11), bg="#78909C", fg="white",
+            command=win.destroy, padx=20,
+        ).pack(side=tk.LEFT, padx=10)
+
+    def open_stats_window(self):
+        result = stats.get_stats()
+
+        win = tk.Toplevel(self.root)
+        win.title("Spray Stats")
+        win.configure(bg="#2d2d2d")
+        win.geometry("360x320")
+        win.transient(self.root)
+        win.grab_set()
+
+        tk.Label(
+            win, text="Spray Stats", font=("Arial", 14, "bold"), fg="white", bg="#2d2d2d"
+        ).pack(anchor="w", padx=15, pady=(15, 10))
+
+        def stat_row(label, value):
+            row = tk.Frame(win, bg="#2d2d2d")
+            row.pack(fill=tk.X, padx=15, pady=6)
+            tk.Label(row, text=label, font=("Arial", 11), fg="#AAAAAA", bg="#2d2d2d").pack(side=tk.LEFT)
+            tk.Label(row, text=value, font=("Arial", 11, "bold"), fg="white", bg="#2d2d2d").pack(side=tk.RIGHT)
+
+        stat_row("Sprays today", str(result["today_count"]))
+        stat_row("Sprays this week", str(result["week_count"]))
+        stat_row("Sprays all-time", str(result["total_count"]))
+
+        if result["most_common_hour"] is not None:
+            hour = result["most_common_hour"]
+            label = time.strftime("%I %p", time.localtime(time.mktime((2000, 1, 1, hour, 0, 0, 0, 0, 0)))).lstrip("0")
+            stat_row("Most common hour", label)
         else:
-            self.btn_zone_edit.config(text="🎯 Edit Spray Zone", bg="#37474F", fg="white")
-            self._zone_drag_start_px = None
-            self._zone_drag_current_px = None
+            stat_row("Most common hour", "—")
+
+        if result["last_event_timestamp"] is not None:
+            last_str = time.strftime("%b %d, %I:%M %p", time.localtime(result["last_event_timestamp"])).replace(" 0", " ")
+            stat_row("Last spray", last_str)
+        else:
+            stat_row("Last spray", "Never")
+
+        tk.Button(
+            win, text="Close", font=("Arial", 11), bg="#78909C", fg="white",
+            command=win.destroy, padx=20,
+        ).pack(pady=20)
+
+    def set_zone_edit_mode(self, mode):
+        """
+        mode is "spray", "exclusion", or None. Selecting a mode cancels
+        any in-progress drag and highlights whichever add-button is active;
+        selecting the already-active mode turns editing off.
+        """
+
+        if self.zone_edit_mode == mode:
+            mode = None
+
+        self.zone_edit_mode = mode
+        self._zone_drag_start_px = None
+        self._zone_drag_current_px = None
+
+        if mode == "spray":
+            self.btn_add_spray_zone.config(text="Drag to add, tap to cancel", bg="#66BB6A", fg="black")
+            self.btn_add_exclusion_zone.config(text="🚫 Exclusion Zone", bg="#37474F", fg="white")
+        elif mode == "exclusion":
+            self.btn_add_exclusion_zone.config(text="Drag to add, tap to cancel", bg="#E57373", fg="black")
+            self.btn_add_spray_zone.config(text="➕ Spray Zone", bg="#37474F", fg="white")
+        else:
+            self.btn_add_spray_zone.config(text="➕ Spray Zone", bg="#37474F", fg="white")
+            self.btn_add_exclusion_zone.config(text="🚫 Exclusion Zone", bg="#37474F", fg="white")
+
+    def undo_last_zone(self):
+        if not self.zone_history:
+            return
+
+        kind, _ = self.zone_history.pop()
+
+        if kind == "spray" and self.spray_zones:
+            self.spray_zones.pop()
+            self.detector.remove_trigger_zone(len(self.detector.trigger_zones) - 1)
+        elif kind == "exclusion" and self.exclusion_zones:
+            self.exclusion_zones.pop()
+            self.detector.remove_exclusion_zone(len(self.detector.exclusion_zones) - 1)
+
+    def clear_all_zones(self):
+        self.spray_zones = []
+        self.exclusion_zones = []
+        self.zone_history = []
+        self.detector.set_zones([], [])
 
     def _on_zone_press(self, event):
-        if not self.zone_edit_mode:
+        if self.zone_edit_mode is None:
             return
         self._zone_drag_start_px = (event.x, event.y)
         self._zone_drag_current_px = (event.x, event.y)
 
     def _on_zone_drag(self, event):
-        if not self.zone_edit_mode or self._zone_drag_start_px is None:
+        if self.zone_edit_mode is None or self._zone_drag_start_px is None:
             return
         self._zone_drag_current_px = (event.x, event.y)
 
     def _on_zone_release(self, event):
-        if not self.zone_edit_mode or self._zone_drag_start_px is None:
+        if self.zone_edit_mode is None or self._zone_drag_start_px is None:
             return
 
         x0, y0 = self._zone_drag_start_px
@@ -313,8 +540,16 @@ class CatSprayerGUI:
         if (nx2 - nx1) < 0.03 or (ny2 - ny1) < 0.03:
             return
 
-        self.trigger_zone = (nx1, ny1, nx2, ny2)
-        self.detector.set_trigger_zone(self.trigger_zone)
+        zone = (nx1, ny1, nx2, ny2)
+
+        if self.zone_edit_mode == "spray":
+            self.spray_zones.append(zone)
+            self.detector.add_trigger_zone(zone)
+            self.zone_history.append(("spray", zone))
+        elif self.zone_edit_mode == "exclusion":
+            self.exclusion_zones.append(zone)
+            self.detector.add_exclusion_zone(zone)
+            self.zone_history.append(("exclusion", zone))
 
     def _show_appropriate_controls(self):
         self.review_panel.pack_forget()
@@ -615,11 +850,12 @@ class CatSprayerGUI:
             try:
                 detections = self.camera.get_detections()
                 result = self.detector.process(detections)
-                self.event_recorder.update(result["cat_detected"])
+                self.event_recorder.update(result["cat_detected"], result["trigger"])
 
                 if result["trigger"]:
                     print(">>> SPRAYER TRIGGERED <<<")
                     self.sprayer.activate()
+                    stats.log_spray_event(result.get("confidence", 0.0))
 
                 live_frame = self.camera.get_annotated_frame()
 
@@ -628,6 +864,8 @@ class CatSprayerGUI:
                     self.hardware_state["confidence"] = result.get("confidence", 0.0)
                     self.hardware_state["live_frame"] = live_frame
                     self.hardware_state["in_zone"] = result.get("in_zone", False)
+                    self.hardware_state["active_trigger_indices"] = result.get("active_trigger_indices", [])
+                    self.hardware_state["active_exclusion_indices"] = result.get("active_exclusion_indices", [])
 
             except Exception as e:
                 print(f"Error in hardware background thread: {e}")
@@ -635,26 +873,26 @@ class CatSprayerGUI:
             # Tiny sleep interval ensures the thread doesn't hog the CPU core completely
             time.sleep(0.01)
 
-    def _draw_trigger_zone(self, img_pil, canvas_w, canvas_h, in_zone):
+    def _draw_zones(self, img_pil, canvas_w, canvas_h, active_trigger_indices, active_exclusion_indices):
         draw = ImageDraw.Draw(img_pil)
 
-        if self.zone_edit_mode and self._zone_drag_start_px is not None and self._zone_drag_current_px is not None:
-            # Live preview of the box currently being dragged out.
+        for i, (zx1, zy1, zx2, zy2) in enumerate(self.spray_zones):
+            box_px = (zx1 * canvas_w, zy1 * canvas_h, zx2 * canvas_w, zy2 * canvas_h)
+            color = "#00E676" if i in active_trigger_indices else "#00E5FF"
+            draw.rectangle(box_px, outline=color, width=3)
+
+        for i, (zx1, zy1, zx2, zy2) in enumerate(self.exclusion_zones):
+            box_px = (zx1 * canvas_w, zy1 * canvas_h, zx2 * canvas_w, zy2 * canvas_h)
+            color = "#FF1744" if i in active_exclusion_indices else "#FF8A65"
+            draw.rectangle(box_px, outline=color, width=3)
+
+        # Live preview of the zone currently being dragged out.
+        if self.zone_edit_mode is not None and self._zone_drag_start_px is not None and self._zone_drag_current_px is not None:
             x0, y0 = self._zone_drag_start_px
             x1, y1 = self._zone_drag_current_px
             box_px = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
-            color = "#FFEB3B"
-        else:
-            zx1, zy1, zx2, zy2 = self.trigger_zone
-            box_px = (zx1 * canvas_w, zy1 * canvas_h, zx2 * canvas_w, zy2 * canvas_h)
-            if self.zone_edit_mode:
-                color = "#FFEB3B"
-            elif in_zone:
-                color = "#00E676"
-            else:
-                color = "#00E5FF"
-
-        draw.rectangle(box_px, outline=color, width=3)
+            color = "#66BB6A" if self.zone_edit_mode == "spray" else "#E57373"
+            draw.rectangle(box_px, outline=color, width=3)
 
     def update_loop(self):
         """Lightweight UI draw loop running on the main Tkinter thread."""
@@ -666,7 +904,8 @@ class CatSprayerGUI:
             cat_detected = self.hardware_state["cat_detected"]
             confidence = self.hardware_state["confidence"]
             live_frame = self.hardware_state["live_frame"]
-            in_zone = self.hardware_state.get("in_zone", False)
+            active_trigger_indices = self.hardware_state.get("active_trigger_indices", [])
+            active_exclusion_indices = self.hardware_state.get("active_exclusion_indices", [])
 
         frame = None
 
@@ -734,7 +973,7 @@ class CatSprayerGUI:
             img_pil = img_pil.resize((canvas_w, canvas_h), Image.Resampling.LANCZOS)
 
             if self.current_mode == "LIVE":
-                self._draw_trigger_zone(img_pil, canvas_w, canvas_h, in_zone)
+                self._draw_zones(img_pil, canvas_w, canvas_h, active_trigger_indices, active_exclusion_indices)
 
             img_tk = ImageTk.PhotoImage(image=img_pil)
 

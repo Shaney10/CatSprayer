@@ -18,6 +18,7 @@ from picamera2 import Picamera2
 from picamera2.devices.imx500 import IMX500
 
 from catsprayer.logger import get_logger
+from catsprayer.config import CONFIG
 
 
 MODEL_FILE = (
@@ -63,10 +64,13 @@ class IMX500Camera:
         self.config = (
             self.picam2.create_preview_configuration(
                 main={
-                    "size": (1920, 1080),
+                    "size": (CONFIG["camera"]["width"], CONFIG["camera"]["height"]),
                     "format": "RGB888",
                 },
                 lores={
+                    # Must match MODEL_FILE's fixed input resolution (see the
+                    # "320x320" in the model filename above) — not a general
+                    # camera setting, so intentionally not read from CONFIG.
                     "size": (320, 320),
                     "format": "RGB888",
                 }

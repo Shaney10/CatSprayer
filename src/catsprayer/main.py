@@ -26,6 +26,7 @@ from catsprayer.sprayer import SprayerController
 from catsprayer.event_recorder import EventRecorder
 from catsprayer.config import CONFIG
 from catsprayer.gui import CatSprayerGUI
+from catsprayer.paths import VIDEOS_DIR
 
 
 def main():
@@ -42,13 +43,20 @@ def main():
         required_detections=CONFIG["detector"]["required_detections"],
         trigger_delay=CONFIG["detector"]["trigger_delay"],
         cooldown_time=CONFIG["detector"]["cooldown_time"],
-        trigger_zone=tuple(CONFIG["detector"]["trigger_zone"]),
+        trigger_zones=[tuple(z) for z in CONFIG["detector"]["spray_zones"]],
+        exclusion_zones=[tuple(z) for z in CONFIG["detector"]["exclusion_zones"]],
         frame_width=CONFIG["camera"]["width"],
         frame_height=CONFIG["camera"]["height"],
     )
 
     sprayer = SprayerController()
-    event_recorder = EventRecorder(camera)
+    event_recorder = EventRecorder(
+        camera,
+        output_directory=str(VIDEOS_DIR),
+        post_event_delay=CONFIG["recording"]["post_event_seconds"],
+        pre_event_seconds=CONFIG["recording"]["pre_event_seconds"],
+        fps=CONFIG["recording"]["fps"],
+    )
 
     try:
         camera.start()

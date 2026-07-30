@@ -1,23 +1,52 @@
 import os
+import subprocess
 import time
 from picamera2.encoders import H264Encoder
-from picamera2.outputs import FfmpegOutput
+from picamera2.outputs import CircularOutput
+
 
 class VideoRecorder:
-    def __init__(self, camera, output_dir="data/videos"):
+    """
+    Continuously encodes the camera's main stream into an in-memory ring
+    buffer (Picamera2's CircularOutput), so that when start() is called,
+    the last `pre_event_seconds` of footage leading up to the event is
+    already captured and gets included in the saved clip -- not just
+    footage from the moment the cat was detected onward.
+
+    The encoder runs for the entire lifetime of this object; start()/stop()
+    only control whether the buffered+live stream is currently being
+    written out to a file, not whether encoding itself is happening.
+    """
+
+    def __init__(self, camera, output_dir="data/videos", pre_event_seconds=2.0, fps=30):
         self.camera = self._find_raw_camera(camera)
-        
+
         if self.camera is None:
             print("WARNING: Could not auto-detect raw Picamera2 instance. Defaulting to passed reference.")
             self.camera = camera
-            
+
         self.output_dir = output_dir
+        self.fps = fps
         self.recording = False
-        
-        self.encoder = None
-        self.output = None
+
+        self._current_h264_path = None
+        self._current_mp4_path = None
 
         os.makedirs(self.output_dir, exist_ok=True)
+
+        # CircularOutput's buffersize is a frame count, not a duration --
+        # convert from the configured pre-event seconds using the camera's
+        # framerate.
+        buffer_frames = max(1, int(pre_event_seconds * fps))
+
+        self.encoder = H264Encoder(bitrate=5000000)
+        self.circular_output = CircularOutput(buffersize=buffer_frames)
+
+        # Start continuous background encoding immediately. From this point
+        # on the ring buffer is always populated with the last
+        # pre_event_seconds of video, ready to be flushed to a file the
+        # moment start() is called.
+        self.camera.start_recording(self.encoder, self.circular_output, name="main")
 
     def _find_raw_camera(self, obj):
         if hasattr(obj, 'start_recording'):
@@ -35,43 +64,71 @@ class VideoRecorder:
             print("Already recording!")
             return
 
-        # Generates a brand new unique filename using the current epoch timestamp with _new suffix
-        filename = f"recording_{int(time.time())}_new.mp4"
-        filepath = os.path.join(self.output_dir, filename)
-        print(f"Recording started: {filepath}")
+        timestamp = int(time.time())
+        # Raw h264 goes to a temp file first (that's what CircularOutput
+        # writes); it gets remuxed into the real .mp4 in stop().
+        self._current_h264_path = os.path.join(self.output_dir, f"_recording_{timestamp}.h264")
+        self._current_mp4_path = os.path.join(self.output_dir, f"recording_{timestamp}_new.mp4")
 
-        # Build a fresh encoder and output stream
-        self.encoder = H264Encoder(bitrate=5000000)
-        self.output = FfmpegOutput(filepath)
+        print(f"Recording started (with pre-event buffer): {self._current_mp4_path}")
 
-        # Start recording on the main stream split
-        self.camera.start_recording(self.encoder, self.output, name="main")
+        # Flushes the buffered pre-event frames to this file first, then
+        # keeps appending new frames as they arrive, until stop() is called.
+        self.circular_output.fileoutput = self._current_h264_path
+        self.circular_output.start()
         self.recording = True
 
     def stop(self):
         if not self.recording:
             return
 
-        # 1. Stop the specific encoder tied to the main stream
-        if self.encoder:
-            self.camera.stop_encoder(self.encoder)
-        else:
-            self.camera.stop_encoder()
-            
+        # Stops writing to this particular file; the encoder and circular
+        # buffer keep running in the background for the next event.
+        self.circular_output.stop()
         self.recording = False
 
-        # 2. Close out the file safely
-        if hasattr(self.output, 'close'):
-            try:
-                self.output.close()
-            except Exception as e:
-                print(f"Notice during output close: {e}")
+        h264_path = self._current_h264_path
+        mp4_path = self._current_mp4_path
+        self._current_h264_path = None
+        self._current_mp4_path = None
 
-        # 3. Wipe references completely so the next start() can rebuild fresh
-        self.encoder = None
-        self.output = None
-        print("Recording stopped cleanly and objects reset.")
+        self._remux_to_mp4(h264_path, mp4_path)
+
+        print("Recording stopped cleanly (pre-event footage included).")
+
+    def _remux_to_mp4(self, h264_path, mp4_path):
+        """
+        Losslessly wraps the raw h264 stream (which already includes the
+        buffered pre-event frames) into a playable .mp4 container via
+        ffmpeg, without re-encoding.
+        """
+
+        if h264_path is None or mp4_path is None:
+            return
+
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-r", str(self.fps),
+                    "-i", h264_path,
+                    "-c", "copy",
+                    mp4_path,
+                ],
+                check=True,
+                capture_output=True,
+            )
+        except Exception as e:
+            print(f"Notice: failed to remux recording to mp4 ({h264_path}): {e}")
+        finally:
+            if os.path.exists(h264_path):
+                os.remove(h264_path)
 
     def cleanup(self):
         if self.recording:
             self.stop()
+
+        try:
+            self.camera.stop_encoder(self.encoder)
+        except Exception as e:
+            print(f"Notice during encoder cleanup: {e}")
