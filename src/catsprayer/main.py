@@ -50,16 +50,23 @@ def main():
     )
 
     sprayer = SprayerController()
-    event_recorder = EventRecorder(
-        camera,
-        output_directory=str(VIDEOS_DIR),
-        post_event_delay=CONFIG["recording"]["post_event_seconds"],
-        pre_event_seconds=CONFIG["recording"]["pre_event_seconds"],
-        fps=CONFIG["recording"]["fps"],
-    )
+    event_recorder = None
 
     try:
         camera.start()
+
+        # Must come after camera.start(): EventRecorder builds a VideoRecorder
+        # that immediately starts continuous background recording (for the
+        # pre-event ring buffer), which would otherwise auto-configure and
+        # start the camera itself with the wrong settings before camera.start()
+        # gets a chance to configure it properly.
+        event_recorder = EventRecorder(
+            camera,
+            output_directory=str(VIDEOS_DIR),
+            post_event_delay=CONFIG["recording"]["post_event_seconds"],
+            pre_event_seconds=CONFIG["recording"]["pre_event_seconds"],
+            fps=CONFIG["recording"]["fps"],
+        )
 
         # Initialize the Tkinter Application Framework Container Context
         root = tk.Tk()
@@ -74,7 +81,8 @@ def main():
         print("\nStopping CatSprayer Application Frame Context.")
 
     finally:
-        event_recorder.cleanup()
+        if event_recorder is not None:
+            event_recorder.cleanup()
         camera.stop()
         sprayer.cleanup()
         print("Shutdown Cleanly.")
