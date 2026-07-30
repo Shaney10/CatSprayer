@@ -74,7 +74,7 @@ spray_duration = 0.5
 [tool.catsprayer.detector]
 
 #Minimum confidence value required from the AI model
-confidence_threshold = 0.65
+confidence_threshold = 0.5
 
 #Number of consecutive detections required before triggering
 required_detections = 2
@@ -90,7 +90,7 @@ cooldown_time = 0.5
 #if its detection box is centered inside AT LEAST ONE spray zone (or there
 #are no spray zones at all, meaning the whole frame counts). Editable live
 #from the GUI's zone editor; this is just the value used on startup.
-spray_zones = [[0.30, 0.30, 0.70, 0.70]]
+spray_zones = [[0.009395973154362415, 0.46166666666666667, 0.5476510067114094, 0.9883333333333333]]
 
 #Exclusion zones: same format as spray_zones. A cat centered inside ANY
 #exclusion zone is never eligible to trigger, even if it's also inside a

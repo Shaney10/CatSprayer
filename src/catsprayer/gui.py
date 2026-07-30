@@ -42,6 +42,7 @@ class CatSprayerGUI:
         self.is_looping_new_clip = False
         self.delete_timer_id = None
         self.delete_countdown_ticks = 0
+        self.restart_requested = False
 
         # Threading Shared State Cache
         self.running = True
@@ -336,59 +337,76 @@ class CatSprayerGUI:
         win = tk.Toplevel(self.root)
         win.title("Detector Settings")
         win.configure(bg="#2d2d2d")
-        win.geometry("420x420")
+        win.geometry("440x460")
         win.transient(self.root)
         win.grab_set()
 
-        fields = {}
+        # label -> [current_value] (mutable single-element list so the
+        # nested functions below can read/update it without needing globals)
+        values = {}
 
-        def add_field(label_text, initial_value, row):
+        def add_stepper(label_text, initial_value, step, min_val, max_val, row, is_int=False, fmt="{:.2f}"):
             tk.Label(
                 win, text=label_text, font=("Arial", 11), fg="white", bg="#2d2d2d", anchor="w"
             ).grid(row=row, column=0, sticky="w", padx=15, pady=8)
-            entry = tk.Entry(win, font=("Arial", 11), width=14)
-            entry.insert(0, str(initial_value))
-            entry.grid(row=row, column=1, sticky="w", padx=15, pady=8)
-            fields[label_text] = entry
+
+            control = tk.Frame(win, bg="#2d2d2d")
+            control.grid(row=row, column=1, sticky="e", padx=15, pady=8)
+
+            values[label_text] = [initial_value]
+            value_label = tk.Label(
+                control, text="", font=("Arial", 12, "bold"), fg="white", bg="#37474F", width=7,
+            )
+
+            def refresh():
+                v = values[label_text][0]
+                value_label.config(text=str(v) if is_int else fmt.format(v))
+
+            def step_value(delta):
+                v = values[label_text][0] + delta
+                v = max(min_val, min(max_val, v))
+                v = int(round(v)) if is_int else round(v, 4)
+                values[label_text][0] = v
+                refresh()
+
+            tk.Button(
+                control, text="−", font=("Arial", 16, "bold"), width=3, bg="#546E7A", fg="white",
+                command=lambda: step_value(-step),
+            ).pack(side=tk.LEFT, padx=(0, 8))
+
+            value_label.pack(side=tk.LEFT)
+
+            tk.Button(
+                control, text="+", font=("Arial", 16, "bold"), width=3, bg="#546E7A", fg="white",
+                command=lambda: step_value(step),
+            ).pack(side=tk.LEFT, padx=(8, 0))
+
+            refresh()
 
         tk.Label(
             win, text="Detector Tuning", font=("Arial", 13, "bold"), fg="white", bg="#2d2d2d"
         ).grid(row=0, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
 
-        add_field("Confidence threshold (0-1)", self.detector.confidence_threshold, 1)
-        add_field("Required detections (frames)", self.detector.required_detections, 2)
-        add_field("Trigger delay (seconds)", self.detector.trigger_delay, 3)
-        add_field("Cooldown time (seconds)", self.detector.cooldown_time, 4)
+        add_stepper("Confidence threshold", self.detector.confidence_threshold, 0.05, 0.05, 1.0, 1, fmt="{:.2f}")
+        add_stepper("Required detections", self.detector.required_detections, 1, 1, 30, 2, is_int=True)
+        add_stepper("Trigger delay (sec)", self.detector.trigger_delay, 0.5, 0.0, 30.0, 3, fmt="{:.1f}")
+        add_stepper("Cooldown time (sec)", self.detector.cooldown_time, 1.0, 0.0, 120.0, 4, fmt="{:.1f}")
 
         tk.Label(
             win,
             text=f"Spray zones: {len(self.spray_zones)}   |   Exclusion zones: {len(self.exclusion_zones)}\n"
                  "(edit zones by dragging on the live video, not here)",
-            font=("Arial", 10), fg="#AAAAAA", bg="#2d2d2d", justify="left", wraplength=380,
+            font=("Arial", 10), fg="#AAAAAA", bg="#2d2d2d", justify="left", wraplength=400,
         ).grid(row=5, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
 
-        status_label = tk.Label(win, text="", font=("Arial", 10), fg="#FF8A80", bg="#2d2d2d", wraplength=380, justify="left")
+        status_label = tk.Label(win, text="", font=("Arial", 10), fg="#FF8A80", bg="#2d2d2d", wraplength=400, justify="left")
         status_label.grid(row=6, column=0, columnspan=2, sticky="w", padx=15, pady=(5, 0))
 
         def on_save():
-            try:
-                confidence_threshold = float(fields["Confidence threshold (0-1)"].get())
-                required_detections = int(fields["Required detections (frames)"].get())
-                trigger_delay = float(fields["Trigger delay (seconds)"].get())
-                cooldown_time = float(fields["Cooldown time (seconds)"].get())
-            except ValueError:
-                status_label.config(text="All fields must be numbers.")
-                return
-
-            if not (0.0 < confidence_threshold <= 1.0):
-                status_label.config(text="Confidence threshold must be between 0 and 1.")
-                return
-            if required_detections < 1:
-                status_label.config(text="Required detections must be at least 1.")
-                return
-            if trigger_delay < 0 or cooldown_time < 0:
-                status_label.config(text="Trigger delay and cooldown time can't be negative.")
-                return
+            confidence_threshold = values["Confidence threshold"][0]
+            required_detections = values["Required detections"][0]
+            trigger_delay = values["Trigger delay (sec)"][0]
+            cooldown_time = values["Cooldown time (sec)"][0]
 
             try:
                 save_detector_settings({
@@ -402,10 +420,7 @@ class CatSprayerGUI:
                 return
 
             win.destroy()
-            messagebox.showinfo(
-                "Settings Saved",
-                "Saved to pyproject.toml. Restart CatSprayer for the new settings to take effect.",
-            )
+            self.show_restart_prompt()
 
         button_row = tk.Frame(win, bg="#2d2d2d")
         button_row.grid(row=7, column=0, columnspan=2, pady=20)
@@ -417,6 +432,38 @@ class CatSprayerGUI:
 
         tk.Button(
             button_row, text="Cancel", font=("Arial", 11), bg="#78909C", fg="white",
+            command=win.destroy, padx=20,
+        ).pack(side=tk.LEFT, padx=10)
+
+    def show_restart_prompt(self):
+        win = tk.Toplevel(self.root)
+        win.title("Restart Required")
+        win.configure(bg="#2d2d2d")
+        win.geometry("380x180")
+        win.transient(self.root)
+        win.grab_set()
+
+        tk.Label(
+            win,
+            text="Settings saved.\nRestart CatSprayer for the changes to take effect.",
+            font=("Arial", 12), fg="white", bg="#2d2d2d", justify="center", wraplength=340,
+        ).pack(padx=20, pady=(25, 15))
+
+        button_row = tk.Frame(win, bg="#2d2d2d")
+        button_row.pack(pady=10)
+
+        def do_restart():
+            self.restart_requested = True
+            win.destroy()
+            self.quit_application()
+
+        tk.Button(
+            button_row, text="Restart Now", font=("Arial", 11, "bold"), bg="#4CAF50", fg="white",
+            command=do_restart, padx=20,
+        ).pack(side=tk.LEFT, padx=10)
+
+        tk.Button(
+            button_row, text="Later", font=("Arial", 11), bg="#78909C", fg="white",
             command=win.destroy, padx=20,
         ).pack(side=tk.LEFT, padx=10)
 
@@ -486,6 +533,21 @@ class CatSprayerGUI:
             self.btn_add_spray_zone.config(text="➕ Spray Zone", bg="#37474F", fg="white")
             self.btn_add_exclusion_zone.config(text="🚫 Exclusion Zone", bg="#37474F", fg="white")
 
+    def _persist_zones(self):
+        """
+        Write the current spray/exclusion zones to pyproject.toml so they
+        survive a restart. Called after every add/undo/clear -- zone edits
+        made by dragging on the video were previously only ever pushed into
+        the live detector object and lost the moment the app restarted.
+        """
+        try:
+            save_detector_settings({
+                "spray_zones": [list(z) for z in self.spray_zones],
+                "exclusion_zones": [list(z) for z in self.exclusion_zones],
+            })
+        except Exception as e:
+            print(f"Notice: could not save zones to pyproject.toml: {e}")
+
     def undo_last_zone(self):
         if not self.zone_history:
             return
@@ -499,11 +561,14 @@ class CatSprayerGUI:
             self.exclusion_zones.pop()
             self.detector.remove_exclusion_zone(len(self.detector.exclusion_zones) - 1)
 
+        self._persist_zones()
+
     def clear_all_zones(self):
         self.spray_zones = []
         self.exclusion_zones = []
         self.zone_history = []
         self.detector.set_zones([], [])
+        self._persist_zones()
 
     def _on_zone_press(self, event):
         if self.zone_edit_mode is None:
@@ -550,6 +615,10 @@ class CatSprayerGUI:
             self.exclusion_zones.append(zone)
             self.detector.add_exclusion_zone(zone)
             self.zone_history.append(("exclusion", zone))
+        else:
+            return
+
+        self._persist_zones()
 
     def _show_appropriate_controls(self):
         self.review_panel.pack_forget()
@@ -986,4 +1055,5 @@ class CatSprayerGUI:
         self.running = False
         self._close_file_capture()
         self.root.destroy()
-        sys.exit(0)
+        if not self.restart_requested:
+            sys.exit(0)

@@ -89,3 +89,6 @@ Thumbs.db
 *.bak
 *.swp
 *~
+
+# Spray-stats event log (per-device runtime data)
+data/events.jsonl

@@ -51,6 +51,7 @@ def main():
 
     sprayer = SprayerController()
     event_recorder = None
+    app = None
 
     try:
         camera.start()
@@ -86,6 +87,10 @@ def main():
         camera.stop()
         sprayer.cleanup()
         print("Shutdown Cleanly.")
+
+    if app is not None and getattr(app, "restart_requested", False):
+        print("Restarting CatSprayer...")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 if __name__ == "__main__":
