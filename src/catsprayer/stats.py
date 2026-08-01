@@ -53,6 +53,17 @@ def _load_events() -> list[dict]:
     return events
 
 
+def reset_stats() -> None:
+    """
+    Clears all logged spray events. Used by the GUI's hold-3s-to-reset
+    control on the stats screen -- deliberately a hard delete rather than
+    an archive/rename, since the whole point is "start fresh".
+    """
+
+    if EVENTS_LOG.exists():
+        EVENTS_LOG.unlink()
+
+
 def get_stats() -> dict:
     """
     Returns:

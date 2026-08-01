@@ -14,7 +14,7 @@ import time
 
 import cv2
 
-from picamera2 import Picamera2
+from picamera2 import Picamera2, MappedArray
 from picamera2.devices.imx500 import IMX500
 
 from catsprayer.logger import get_logger
@@ -94,9 +94,79 @@ class IMX500Camera:
             self.config
         )
 
+        # Draws detection boxes/confidence directly into the actual 'main'
+        # stream buffer on every captured frame -- this is what makes them
+        # show up in recorded video too, not just the live on-screen view,
+        # since VideoRecorder's encoder also reads from the 'main' stream.
+        self.picam2.pre_callback = self._draw_overlay
+
         self.picam2.start()
 
         time.sleep(2)
+
+
+
+    def _draw_overlay(self, request):
+        """
+        Runs on every captured frame (registered as picam2.pre_callback in
+        start()). Draws the most recently known detections directly into
+        the request's actual 'main' stream buffer via MappedArray, which
+        makes the overlay part of the real frame data -- seen by the live
+        preview AND by anything reading the 'main' stream, including
+        VideoRecorder's H264 encoder. Deliberately reuses self.last_detections
+        (already maintained by get_detections()) rather than re-parsing the
+        IMX500 output here, since this runs on every frame and that parsing
+        is comparatively expensive.
+        """
+
+        detections = self.last_detections
+
+        if not detections:
+            return
+
+        try:
+            with MappedArray(request, "main") as m:
+                frame = m.array
+
+                for det in detections:
+                    x1, y1, x2, y2 = det["box"]
+
+                    cv2.rectangle(
+                        frame,
+                        (x1, y1),
+                        (x2, y2),
+                        (0, 255, 0),
+                        3,
+                    )
+
+                    text = (
+                        f'{det["label"]} '
+                        f'{det["confidence"]:.0%}'
+                    )
+
+                    # Keep text visible if box is near top
+                    text_y = max(y1 - 10, 30)
+
+                    cv2.rectangle(
+                        frame,
+                        (x1, text_y - 28),
+                        (x1 + 220, text_y),
+                        (0, 255, 0),
+                        -1,
+                    )
+
+                    cv2.putText(
+                        frame,
+                        text,
+                        (x1 + 5, text_y - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.75,
+                        (0, 0, 0),
+                        2,
+                    )
+        except Exception as e:
+            # Never let an overlay hiccup take down frame capture.
+            print(f"Notice: overlay draw failed: {e}")
 
 
 
@@ -222,59 +292,12 @@ class IMX500Camera:
 
 
     def get_annotated_frame(self):
+        """
+        Kept for backward compatibility with existing callers (gui.py).
+        Detection boxes/confidence are now burned directly into the actual
+        frame buffer by _draw_overlay (registered as pre_callback in
+        start()), so there's nothing left to draw here -- drawing again
+        would just duplicate the same boxes.
+        """
 
-        frame = self.get_frame()
-
-        detections = self.get_detections()
-
-
-        for det in detections:
-
-            x1, y1, x2, y2 = det["box"]
-
-
-            cv2.rectangle(
-                frame,
-                (x1, y1),
-                (x2, y2),
-                (0, 255, 0),
-                3,
-            )
-
-
-            text = (
-                f'{det["label"]} '
-                f'{det["confidence"]:.0%}'
-            )
-
-
-            #
-            # Keep text visible if box is near top
-            #
-            text_y = max(
-                y1 - 10,
-                30
-            )
-
-
-            cv2.rectangle(
-                frame,
-                (x1, text_y - 28),
-                (x1 + 220, text_y),
-                (0, 255, 0),
-                -1,
-            )
-
-
-            cv2.putText(
-                frame,
-                text,
-                (x1 + 5, text_y - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                (0, 0, 0),
-                2,
-            )
-
-
-        return frame
+        return self.get_frame()

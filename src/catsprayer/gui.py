@@ -44,6 +44,17 @@ class CatSprayerGUI:
         self.delete_countdown_ticks = 0
         self.restart_requested = False
 
+        # Slow-motion playback (clips only, not live view). Rather than
+        # slowing the whole update_loop's redraw cadence (which would make
+        # button state / other UI feel sluggish too), a new frame is only
+        # actually read from the clip every SLOW_MOTION_DIVISOR ticks; the
+        # rest of the time the last-read frame is redisplayed. Keeps the UI
+        # redraw rate constant while the video content itself plays slower.
+        self.slow_motion_enabled = False
+        self.SLOW_MOTION_DIVISOR = 4
+        self._playback_tick_counter = 0
+        self._last_playback_frame = None
+
         # Threading Shared State Cache
         self.running = True
         self.hardware_state = {
@@ -139,6 +150,21 @@ class CatSprayerGUI:
         row2.pack(fill=tk.X)
         tk.Button(row2, text="Delete", bg="#D32F2F", fg="white", font=("Arial", 11, "bold"), pady=4, command=self.action_immediate_delete).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2, pady=2)
         tk.Button(row2, text="Decide Later", bg="#78909C", fg="white", font=("Arial", 11, "bold"), pady=4, command=self.action_decide_later).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2, pady=2)
+
+        # Shared bar shown alongside EITHER review_panel or playback_panel --
+        # slow motion is useful when reviewing new/queued clips too, not
+        # just regular archive playback.
+        self.slow_motion_bar = tk.Frame(self.context_frame, bg="#2d2d2d")
+
+        self.btn_slow_motion = tk.Button(
+            self.slow_motion_bar,
+            text="🐢 Slow Motion: Off",
+            font=("Arial", 11, "bold"),
+            bg="#37474F",
+            fg="white",
+            command=self.toggle_slow_motion,
+        )
+        self.btn_slow_motion.pack(fill=tk.X, pady=2)
 
         # 2. Standard Playback Manipulation Panel
         self.playback_panel = tk.Frame(self.context_frame, bg="#2d2d2d")
@@ -468,12 +494,10 @@ class CatSprayerGUI:
         ).pack(side=tk.LEFT, padx=10)
 
     def open_stats_window(self):
-        result = stats.get_stats()
-
         win = tk.Toplevel(self.root)
         win.title("Spray Stats")
         win.configure(bg="#2d2d2d")
-        win.geometry("360x320")
+        win.geometry("360x420")
         win.transient(self.root)
         win.grab_set()
 
@@ -481,33 +505,87 @@ class CatSprayerGUI:
             win, text="Spray Stats", font=("Arial", 14, "bold"), fg="white", bg="#2d2d2d"
         ).pack(anchor="w", padx=15, pady=(15, 10))
 
-        def stat_row(label, value):
+        value_labels = {}
+
+        def stat_row(key, label):
             row = tk.Frame(win, bg="#2d2d2d")
             row.pack(fill=tk.X, padx=15, pady=6)
             tk.Label(row, text=label, font=("Arial", 11), fg="#AAAAAA", bg="#2d2d2d").pack(side=tk.LEFT)
-            tk.Label(row, text=value, font=("Arial", 11, "bold"), fg="white", bg="#2d2d2d").pack(side=tk.RIGHT)
+            value_label = tk.Label(row, text="", font=("Arial", 11, "bold"), fg="white", bg="#2d2d2d")
+            value_label.pack(side=tk.RIGHT)
+            value_labels[key] = value_label
 
-        stat_row("Sprays today", str(result["today_count"]))
-        stat_row("Sprays this week", str(result["week_count"]))
-        stat_row("Sprays all-time", str(result["total_count"]))
+        stat_row("today", "Sprays today")
+        stat_row("week", "Sprays this week")
+        stat_row("total", "Sprays all-time")
+        stat_row("hour", "Most common hour")
+        stat_row("last", "Last spray")
 
-        if result["most_common_hour"] is not None:
-            hour = result["most_common_hour"]
-            label = time.strftime("%I %p", time.localtime(time.mktime((2000, 1, 1, hour, 0, 0, 0, 0, 0)))).lstrip("0")
-            stat_row("Most common hour", label)
-        else:
-            stat_row("Most common hour", "—")
+        def refresh_display():
+            result = stats.get_stats()
+            value_labels["today"].config(text=str(result["today_count"]))
+            value_labels["week"].config(text=str(result["week_count"]))
+            value_labels["total"].config(text=str(result["total_count"]))
 
-        if result["last_event_timestamp"] is not None:
-            last_str = time.strftime("%b %d, %I:%M %p", time.localtime(result["last_event_timestamp"])).replace(" 0", " ")
-            stat_row("Last spray", last_str)
-        else:
-            stat_row("Last spray", "Never")
+            if result["most_common_hour"] is not None:
+                hour = result["most_common_hour"]
+                hour_label = time.strftime(
+                    "%I %p", time.localtime(time.mktime((2000, 1, 1, hour, 0, 0, 0, 0, 0)))
+                ).lstrip("0")
+                value_labels["hour"].config(text=hour_label)
+            else:
+                value_labels["hour"].config(text="—")
+
+            if result["last_event_timestamp"] is not None:
+                last_str = time.strftime(
+                    "%b %d, %I:%M %p", time.localtime(result["last_event_timestamp"])
+                ).replace(" 0", " ")
+                value_labels["last"].config(text=last_str)
+            else:
+                value_labels["last"].config(text="Never")
+
+        refresh_display()
+
+        # --- Hold 3s to Reset ---
+        reset_hold_state = {"ticks": 0, "timer_id": None}
+
+        def reset_button_visual():
+            btn_reset.config(bg="#B71C1C", text="⚠️ Hold 3s to Reset Stats")
+
+        def on_reset_press(event):
+            reset_hold_state["ticks"] = 3
+            btn_reset.config(bg="#FF3D00", text="Holding... 3s")
+            tick_reset_timer()
+
+        def tick_reset_timer():
+            if reset_hold_state["ticks"] > 1:
+                reset_hold_state["ticks"] -= 1
+                btn_reset.config(text=f"Holding... {reset_hold_state['ticks']}s")
+                reset_hold_state["timer_id"] = win.after(1000, tick_reset_timer)
+            else:
+                reset_hold_state["timer_id"] = None
+                reset_button_visual()
+                stats.reset_stats()
+                refresh_display()
+
+        def on_reset_release(event):
+            if reset_hold_state["timer_id"] is not None:
+                win.after_cancel(reset_hold_state["timer_id"])
+                reset_hold_state["timer_id"] = None
+            reset_button_visual()
+
+        btn_reset = tk.Button(
+            win, text="⚠️ Hold 3s to Reset Stats", font=("Arial", 11, "bold"),
+            bg="#B71C1C", fg="white", activebackground="#B71C1C", activeforeground="white",
+        )
+        btn_reset.pack(fill=tk.X, padx=15, pady=(15, 5))
+        btn_reset.bind("<ButtonPress-1>", on_reset_press)
+        btn_reset.bind("<ButtonRelease-1>", on_reset_release)
 
         tk.Button(
             win, text="Close", font=("Arial", 11), bg="#78909C", fg="white",
             command=win.destroy, padx=20,
-        ).pack(pady=20)
+        ).pack(pady=15)
 
     def set_zone_edit_mode(self, mode):
         """
@@ -623,10 +701,13 @@ class CatSprayerGUI:
     def _show_appropriate_controls(self):
         self.review_panel.pack_forget()
         self.playback_panel.pack_forget()
+        self.slow_motion_bar.pack_forget()
 
         if self.current_mode == "LIVE":
             return
-        
+
+        self.slow_motion_bar.pack(fill=tk.X)
+
         if self.is_looping_new_clip or self.current_mode == "REVIEW_QUEUE":
             self.review_panel.pack(fill=tk.X)
         else:
@@ -773,6 +854,8 @@ class CatSprayerGUI:
                 os.environ['LD_LIBRARY_PATH'] = old_ld_path
 
         self.current_playback_file = filepath
+        self._last_playback_frame = None
+        self._playback_tick_counter = 0
         self._show_appropriate_controls()
 
     def _advance_queue_or_exit(self):
@@ -868,6 +951,15 @@ class CatSprayerGUI:
                 self.set_mode_live()
         except Exception as e:
             messagebox.showerror("IO Error", f"Could not remove video: {e}")
+
+    def toggle_slow_motion(self):
+        self.slow_motion_enabled = not self.slow_motion_enabled
+        self._playback_tick_counter = 0
+
+        if self.slow_motion_enabled:
+            self.btn_slow_motion.config(text="🐢 Slow Motion: On", bg="#F9A825", fg="black")
+        else:
+            self.btn_slow_motion.config(text="🐢 Slow Motion: Off", bg="#37474F", fg="white")
 
     def toggle_favorite_status(self):
         selection = self.listbox.curselection()
@@ -1005,29 +1097,40 @@ class CatSprayerGUI:
                     self.status_desc.config(text="Action Required: Loop Active")
 
             if self.cap is not None and self.cap.isOpened():
-                ret, raw_frame = self.cap.read()
-                if ret:
-                    frame = raw_frame
+                if self.slow_motion_enabled:
+                    self._playback_tick_counter += 1
+                    should_advance = (self._playback_tick_counter % self.SLOW_MOTION_DIVISOR == 0)
                 else:
-                    if self.is_looping_new_clip or self.current_mode == "REVIEW_QUEUE":
-                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        ret, raw_frame = self.cap.read()
-                        if ret:
-                            frame = raw_frame
+                    should_advance = True
+
+                if not should_advance and self._last_playback_frame is not None:
+                    frame = self._last_playback_frame
+                else:
+                    ret, raw_frame = self.cap.read()
+                    if ret:
+                        frame = raw_frame
+                        self._last_playback_frame = raw_frame
                     else:
-                        selection = self.listbox.curselection()
-                        if selection:
-                            next_index = selection[0] + 1
-                            if next_index < self.listbox.size():
-                                self.listbox.selection_clear(0, tk.END)
-                                self.listbox.selection_set(next_index)
-                                self.listbox.see(next_index)
-                                self.on_clip_selected(None)
-                            else:
-                                self.listbox.selection_clear(0, tk.END)
-                                self.listbox.selection_set(0)
-                                self.listbox.see(0)
-                                self.on_clip_selected(None)
+                        if self.is_looping_new_clip or self.current_mode == "REVIEW_QUEUE":
+                            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            ret, raw_frame = self.cap.read()
+                            if ret:
+                                frame = raw_frame
+                                self._last_playback_frame = raw_frame
+                        else:
+                            selection = self.listbox.curselection()
+                            if selection:
+                                next_index = selection[0] + 1
+                                if next_index < self.listbox.size():
+                                    self.listbox.selection_clear(0, tk.END)
+                                    self.listbox.selection_set(next_index)
+                                    self.listbox.see(next_index)
+                                    self.on_clip_selected(None)
+                                else:
+                                    self.listbox.selection_clear(0, tk.END)
+                                    self.listbox.selection_set(0)
+                                    self.listbox.see(0)
+                                    self.on_clip_selected(None)
 
         # 3. Handle Tkinter image compilation and frame drawing
         if frame is not None:
