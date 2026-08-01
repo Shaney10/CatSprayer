@@ -33,6 +33,7 @@ class CatDetector:
         exclusion_zones: list[tuple[float, float, float, float]] | None = None,
         frame_width: int = 1920,
         frame_height: int = 1080,
+        max_box_fraction: float = 1.0,
     ):
 
         self.confidence_threshold = confidence_threshold
@@ -63,6 +64,15 @@ class CatDetector:
         # they're used to normalize boxes before comparing to zones.
         self.frame_width = frame_width
         self.frame_height = frame_height
+
+        # Reject any candidate detection whose box covers more than this
+        # fraction of the frame's width OR height. A real cat at normal
+        # working distance never fills nearly the whole frame -- boxes
+        # that large are almost always something very close to the lens
+        # itself (a bug, a strand of spiderweb, a raindrop, glare), which
+        # tend to false-trigger as "cat" at night under IR illumination.
+        # 1.0 (100%) effectively disables this filter.
+        self.max_box_fraction = max_box_fraction
 
 
         self.detection_count = 0
@@ -332,6 +342,10 @@ class CatDetector:
                 continue
 
 
+            if self._box_too_large(detection.get("box")):
+                continue
+
+
             if (
                 best_cat is None
                 or
@@ -342,3 +356,18 @@ class CatDetector:
 
 
         return best_cat
+
+
+    def _box_too_large(self, box) -> bool:
+        if box is None or self.max_box_fraction >= 1.0:
+            return False
+
+        x1, y1, x2, y2 = box
+        width_fraction = (x2 - x1) / self.frame_width
+        height_fraction = (y2 - y1) / self.frame_height
+
+        return (
+            width_fraction > self.max_box_fraction
+            or
+            height_fraction > self.max_box_fraction
+        )

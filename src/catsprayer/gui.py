@@ -363,7 +363,7 @@ class CatSprayerGUI:
         win = tk.Toplevel(self.root)
         win.title("Detector Settings")
         win.configure(bg="#2d2d2d")
-        win.geometry("440x460")
+        win.geometry("440x510")
         win.transient(self.root)
         win.grab_set()
 
@@ -417,22 +417,24 @@ class CatSprayerGUI:
         add_stepper("Required detections", self.detector.required_detections, 1, 1, 30, 2, is_int=True)
         add_stepper("Trigger delay (sec)", self.detector.trigger_delay, 0.5, 0.0, 30.0, 3, fmt="{:.1f}")
         add_stepper("Cooldown time (sec)", self.detector.cooldown_time, 1.0, 0.0, 120.0, 4, fmt="{:.1f}")
+        add_stepper("Max detection size", self.detector.max_box_fraction, 0.05, 0.10, 1.0, 5, fmt="{:.0%}")
 
         tk.Label(
             win,
             text=f"Spray zones: {len(self.spray_zones)}   |   Exclusion zones: {len(self.exclusion_zones)}\n"
                  "(edit zones by dragging on the live video, not here)",
             font=("Arial", 10), fg="#AAAAAA", bg="#2d2d2d", justify="left", wraplength=400,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
+        ).grid(row=6, column=0, columnspan=2, sticky="w", padx=15, pady=(15, 5))
 
         status_label = tk.Label(win, text="", font=("Arial", 10), fg="#FF8A80", bg="#2d2d2d", wraplength=400, justify="left")
-        status_label.grid(row=6, column=0, columnspan=2, sticky="w", padx=15, pady=(5, 0))
+        status_label.grid(row=7, column=0, columnspan=2, sticky="w", padx=15, pady=(5, 0))
 
         def on_save():
             confidence_threshold = values["Confidence threshold"][0]
             required_detections = values["Required detections"][0]
             trigger_delay = values["Trigger delay (sec)"][0]
             cooldown_time = values["Cooldown time (sec)"][0]
+            max_box_fraction = values["Max detection size"][0]
 
             try:
                 save_detector_settings({
@@ -440,6 +442,7 @@ class CatSprayerGUI:
                     "required_detections": required_detections,
                     "trigger_delay": trigger_delay,
                     "cooldown_time": cooldown_time,
+                    "max_box_fraction": max_box_fraction,
                 })
             except Exception as e:
                 status_label.config(text=f"Could not save: {e}")
@@ -449,7 +452,7 @@ class CatSprayerGUI:
             self.show_restart_prompt()
 
         button_row = tk.Frame(win, bg="#2d2d2d")
-        button_row.grid(row=7, column=0, columnspan=2, pady=20)
+        button_row.grid(row=8, column=0, columnspan=2, pady=20)
 
         tk.Button(
             button_row, text="Save", font=("Arial", 11, "bold"), bg="#4CAF50", fg="white",

@@ -47,6 +47,14 @@ def main():
         exclusion_zones=[tuple(z) for z in CONFIG["detector"]["exclusion_zones"]],
         frame_width=CONFIG["camera"]["width"],
         frame_height=CONFIG["camera"]["height"],
+        # .get() with a fallback, not a hard key lookup: this setting is new
+        # and won't exist yet in an existing pyproject.toml until it's saved
+        # once via the Settings screen (or added manually).
+        # Default 0.75 chosen from real measured data: this cat's detection
+        # box maxed out around 63-67% even at its closest approach to the
+        # lens, while a confirmed false positive (bug/glare near the lens
+        # at night) measured 86-99%. 0.75 sits comfortably in that gap.
+        max_box_fraction=CONFIG["detector"].get("max_box_fraction", 0.75),
     )
 
     sprayer = SprayerController()
