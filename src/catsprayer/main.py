@@ -27,6 +27,10 @@ from catsprayer.event_recorder import EventRecorder
 from catsprayer.config import CONFIG
 from catsprayer.gui import CatSprayerGUI
 from catsprayer.paths import VIDEOS_DIR
+from catsprayer.logger import configure_logging, get_logger
+
+configure_logging()
+logger = get_logger(__name__)
 
 
 def main():
@@ -35,6 +39,7 @@ def main():
     print("    CatSprayer GUI Starting")
     print("============================")
     print()
+    logger.info("CatSprayer starting up")
 
     camera = IMX500Camera()
 
@@ -84,10 +89,20 @@ def main():
         app = CatSprayerGUI(root, camera, detector, sprayer, event_recorder)
 
         print("GUI Active. Monitoring Background Pipelines...")
+        logger.info("GUI active, entering mainloop")
         root.mainloop()
 
     except KeyboardInterrupt:
         print("\nStopping CatSprayer Application Frame Context.")
+        logger.info("Stopped via KeyboardInterrupt")
+
+    except Exception:
+        # Anything else that reaches here is an unhandled crash. Previously
+        # this would just propagate with no persisted record -- if the app
+        # ever needs to be manually restarted with no visible cause, this is
+        # the first thing to check in the log file.
+        logger.exception("Unhandled exception reached main() -- app is crashing")
+        raise
 
     finally:
         if event_recorder is not None:
@@ -95,9 +110,11 @@ def main():
         camera.stop()
         sprayer.cleanup()
         print("Shutdown Cleanly.")
+        logger.info("Shutdown complete")
 
     if app is not None and getattr(app, "restart_requested", False):
         print("Restarting CatSprayer...")
+        logger.info("Restart requested, re-executing process")
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
 

@@ -104,6 +104,12 @@ class IMX500Camera:
 
         time.sleep(2)
 
+        self.logger.info(
+            "Camera started (main=%sx%s, lores=320x320)",
+            self.config["main"]["size"][0],
+            self.config["main"]["size"][1],
+        )
+
 
 
     def _draw_overlay(self, request):
@@ -164,15 +170,16 @@ class IMX500Camera:
                         (0, 0, 0),
                         2,
                     )
-        except Exception as e:
+        except Exception:
             # Never let an overlay hiccup take down frame capture.
-            print(f"Notice: overlay draw failed: {e}")
+            self.logger.exception("Overlay draw failed")
 
 
 
     def stop(self):
 
         self.picam2.stop()
+        self.logger.info("Camera stopped")
 
 
 

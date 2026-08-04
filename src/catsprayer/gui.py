@@ -19,6 +19,9 @@ from PIL import Image, ImageTk, ImageDraw
 from catsprayer.paths import VIDEOS_DIR
 from catsprayer.config import save_detector_settings
 from catsprayer import stats
+from catsprayer.logger import get_logger
+
+logger = get_logger(__name__)
 
 class CatSprayerGUI:
 
@@ -66,6 +69,14 @@ class CatSprayerGUI:
             "active_exclusion_indices": [],
         }
         self.state_lock = threading.Lock()
+
+        # _hardware_worker_loop stall watchdog -- tracks consecutive failures
+        # and how long it's been since a successful reading, so a sustained
+        # camera/detector stall gets one clear log entry instead of either
+        # total silence or thousands of repeated tracebacks.
+        self._hw_consecutive_errors = 0
+        self._hw_last_success_time = time.time()
+        self._hw_stall_logged = False
 
         # Spray/Exclusion Zones (each a normalized 0.0-1.0 rect x1,y1,x2,y2).
         # A cat is eligible to trigger the sprayer if it's centered inside at
@@ -1010,6 +1021,8 @@ class CatSprayerGUI:
 
     def _hardware_worker_loop(self):
         """Background worker thread dedicated solely to processing pipeline hardware tasks."""
+        STALL_WARNING_SECONDS = 30
+
         while self.running:
             try:
                 detections = self.camera.get_detections()
@@ -1017,7 +1030,7 @@ class CatSprayerGUI:
                 self.event_recorder.update(result["cat_detected"], result["trigger"])
 
                 if result["trigger"]:
-                    print(">>> SPRAYER TRIGGERED <<<")
+                    logger.info("Sprayer triggered (confidence=%.2f)", result.get("confidence", 0.0))
                     self.sprayer.activate()
                     stats.log_spray_event(result.get("confidence", 0.0))
 
@@ -1031,9 +1044,35 @@ class CatSprayerGUI:
                     self.hardware_state["active_trigger_indices"] = result.get("active_trigger_indices", [])
                     self.hardware_state["active_exclusion_indices"] = result.get("active_exclusion_indices", [])
 
-            except Exception as e:
-                print(f"Error in hardware background thread: {e}")
-            
+                if self._hw_stall_logged:
+                    downtime = time.time() - self._hw_last_success_time
+                    logger.warning(
+                        "Hardware loop recovered after %d consecutive errors (~%.0fs of downtime)",
+                        self._hw_consecutive_errors, downtime,
+                    )
+                    self._hw_stall_logged = False
+
+                self._hw_consecutive_errors = 0
+                self._hw_last_success_time = time.time()
+
+            except Exception:
+                self._hw_consecutive_errors += 1
+
+                if self._hw_consecutive_errors == 1:
+                    # Full traceback on the first failure of a new streak --
+                    # most useful moment to capture detail, without flooding
+                    # the log if this turns into a sustained stall.
+                    logger.exception("Error in hardware background thread")
+
+                stall_duration = time.time() - self._hw_last_success_time
+                if stall_duration >= STALL_WARNING_SECONDS and not self._hw_stall_logged:
+                    logger.critical(
+                        "Camera/detector has not produced a successful reading in "
+                        "%.0fs (%d consecutive errors) -- pipeline may be stuck",
+                        stall_duration, self._hw_consecutive_errors,
+                    )
+                    self._hw_stall_logged = True
+
             # Tiny sleep interval ensures the thread doesn't hog the CPU core completely
             time.sleep(0.01)
 
