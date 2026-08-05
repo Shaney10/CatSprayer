@@ -1,95 +1,126 @@
-# CatSprayer Intelligent GUI Dashboard
+# CatSprayer
 
-AI-powered, vision-driven containment dashboard designed for Raspberry Pi to detect target activity and manage localized hardware peripherals.
+AI-powered cat detection and automated water sprayer for Raspberry Pi, built around the Sony IMX500 AI camera accelerator. Runs as a standalone, touchscreen-friendly dashboard that boots straight into the control panel — no keyboard or monitor required after setup.
 
 ## Description
 
-The CatSprayer Intelligent GUI Dashboard coordinates an advanced detection system leveraging the IMX500 hardware accelerator. The application features a unified Tkinter graphical control dashboard, real-time camera tracking, event logs, automated video recording, and direct GPIO signal management for active deterrent hardware. It is built to operate completely standalone as a headless device that initializes straight into the control panel upon power delivery.
+CatSprayer watches a camera feed for cats using on-camera AI inference (via the IMX500's built-in neural network accelerator, so detection runs on the camera itself rather than taxing the Pi's CPU), and triggers a GPIO-controlled sprayer when a cat is detected inside a user-defined zone. It's built entirely around a single Tkinter dashboard that covers live monitoring, clip review, and configuration — all designed to be operated by touch alone.
+
+### Features
+
+- **Live detection view** with bounding boxes and confidence scores drawn directly onto both the on-screen preview and any saved recordings, so you can always see exactly what triggered a spray.
+- **Multiple spray zones and exclusion zones** — draw as many "spray if the cat is here" and "never spray here" rectangles as you want directly on the live video by dragging; exclusion always overrides a spray zone.
+- **Pre-event recording** — a continuously running ring buffer means saved clips include a few seconds of footage *before* the triggering detection, not just after.
+- **Recordings only save on an actual spray**, not on every cat detection, so you're not left digging through clips of cats that were never sprayed.
+- **False-positive filtering**: a confidence threshold, a required-consecutive-detections counter, and a maximum detection-size filter (to reject implausibly large boxes typically caused by bugs, glare, or debris very close to the lens at night) all work together to cut down false triggers.
+- **In-app Settings screen** — confidence threshold, required detections, trigger delay, cooldown time, and max detection size are all adjustable with tap-only +/- controls (no keyboard needed), saved directly to `pyproject.toml`, with a one-tap restart when you're done.
+- **Review Queue** for newly recorded clips — Keep, Favorite, Delete, or Decide Later, plus a Favorites and full clip archive.
+- **Slow-motion playback toggle** for reviewing clips frame-by-frame in detail.
+- **Spray stats screen** — sprays today/this week/all-time and the most common hour, with a hold-3-seconds-to-confirm reset.
 
 ## Getting Started
 
 ### Dependencies
 
-* **Operating System:** Raspberry Pi OS (64-bit) with Desktop initialized to **Display Auto-Login**.
-* **System Packages:** `python3-pip`, `python3-venv`, `python3-tk`, libatlas-base-dev
-* **Hardware Requirements:** Raspberry Pi camera module, IMX500 AI accelerator, and configured GPIO relay connections.
+* **Operating System:** Raspberry Pi OS (64-bit), Desktop, with **Auto-Login to Desktop** enabled.
+* **System packages:** `python3-pip`, `python3-venv`, `python3-tk`, `libatlas-base-dev`, `ffmpeg`
+* **Hardware:** Raspberry Pi camera module with IMX500 AI accelerator, and a GPIO-connected relay driving the sprayer solenoid/pump.
 
 ### Installing
 
-1. Clone the project repository into your home directory:
-   ```bash
-   git clone <your-repo-link> ~/CatSprayer
-   git clone https://github.com/Shaney10/CatSprayer.git ~/CatSprayer
+Clone the repository into your home directory:
+```bash
+git clone https://github.com/Shaney10/CatSprayer.git ~/CatSprayer
+```
 
-Navigate into the workspace folder:
-
-Bash
+Move into the project folder and set up an isolated virtual environment:
+```bash
 cd ~/CatSprayer
-Initialize the isolated Python virtual environment:
-
-Bash
 python3 -m venv .venv
 source .venv/bin/activate
-Upgrade the package manager and install the project in editable deployment mode:
+```
 
-Bash
+Install the project (this also pulls in its Python dependencies, including `picamera2`, `numpy`, `lgpio`, and `tomlkit`):
+```bash
 pip install --upgrade pip
 pip install -e .
-Executing program
-Running Manually over SSH
-To manually start the program over an active network shell session, you must explicitly route the execution loop to your primary connected monitor display:
+```
 
-Bash
+### Configuration
+
+Runtime settings (GPIO pin, spray duration, detector tuning, spray/exclusion zones, camera resolution, recording behavior) live in `pyproject.toml` under `[tool.catsprayer]`. Most of the detector-related values can also be changed live from the app itself via the **⚙️ Detector Settings** screen — those changes are written back to `pyproject.toml` automatically.
+
+## Running the Program
+
+### Manually, over SSH
+
+To launch it manually while SSH'd in, route the display to the Pi's local screen:
+```bash
 cd ~/CatSprayer
 source .venv/bin/activate
-DISPLAY=:0 python -m src.catsprayer.main
-Configuring Automated Launch on System Power-Up
-Create the local desktop autostart profile directory:
+DISPLAY=:0 python -m catsprayer.main
+```
 
-Bash
+### Automatic launch on boot
+
+Create the autostart directory:
+```bash
 mkdir -p ~/.config/autostart
-Open the autostart entry configuration file using a text editor:
+```
 
-Bash
+Create the autostart entry:
+```bash
 nano ~/.config/autostart/catsprayer.desktop
-Insert the following initialization script block entirely into the file:
+```
 
-Ini, TOML
+Paste in the following, adjusting the paths if your project isn't at `/home/haney/CatSprayer`:
+```ini
 [Desktop Entry]
 Type=Application
 Name=CatSprayer
-Exec=bash -c "cd /home/haney/CatSprayer && source .venv/bin/activate && python -m src.catsprayer.main"
+Exec=bash -c "cd /home/haney/CatSprayer && source .venv/bin/activate && python -m catsprayer.main"
 WorkingDirectory=/home/haney/CatSprayer
 Terminal=false
-Save and exit (Ctrl+O, Enter, Ctrl+X), then cycle the system hardware power via a restart to verify automatic presentation:
+```
 
-Bash
+Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`), then reboot to confirm it launches automatically:
+```bash
 sudo reboot
-Help
-If the graphical interface fails to populate on screen following a device restart, verify that the active window display environment is not locked out by evaluating local Python import structures manually:
+```
 
-Bash
-DISPLAY=:0 python -m src.catsprayer.main
-Common Fixes: Ensure your Raspberry Pi is configured via sudo raspi-config under System Options -> Boot / Auto Login to route directly to Desktop Autologin. If the user session pauses on a password lock screen, background system initializers will fail to resolve.
+## Troubleshooting
 
-Authors
+If the dashboard doesn't appear after a reboot, first confirm the Pi is actually configured to auto-login to the desktop (`sudo raspi-config` → System Options → Boot / Auto Login → Desktop Autologin) — background autostart entries won't run if the session is sitting at a login/lock screen.
+
+If it still doesn't launch, try running it manually as shown above to see the actual error output:
+```bash
+DISPLAY=:0 python -m catsprayer.main
+```
+
+## Roadmap
+
+- Package as a standalone installable application (e.g. via PyInstaller) instead of requiring a manual Python environment setup — planned, not yet started.
+
+## Version History
+
+**1.0**
+- Full rewrite of the detection/recording/review pipeline: multi-zone spray + exclusion detection, pre-event ring-buffer recording, trigger-only (not detection-only) recording, and a max-detection-size false-positive filter.
+- Detection boxes and confidence burned directly into both the live view and saved recordings.
+- In-app Settings screen for live detector tuning, with automatic config persistence.
+- Review Queue, Favorites, slow-motion playback, and spray statistics with reset.
+
+**0.1**
+- Initial release: local virtual environment setup and IMX500 camera integration, `.desktop`-based headless autostart.
+
+## License
+
+Not yet chosen. If you'd like the project to have explicit usage terms, add a `LICENSE` file and update this section accordingly.
+
+## Authors
+
 Haney
 
-Version History
-0.1
+## Acknowledgments
 
-Initial Release
-
-Verified local virtual environment structures and operational IMX500 integration routines.
-
-Integrated custom .desktop workspace engine to force headless launch configurations.
-
-License
-This project is licensed under the [NAME HERE] License - see the LICENSE.md file for details
-
-Acknowledgments
-Raspberry Pi AI Module Camera framework documentation
-
-
-
-
+- Raspberry Pi AI Camera (IMX500) documentation
+- The [Picamera2](https://github.com/raspberrypi/picamera2) project
