@@ -1,5 +1,6 @@
 import os
 import subprocess
+import threading
 import time
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import CircularOutput
@@ -92,9 +93,21 @@ class VideoRecorder:
         self._current_h264_path = None
         self._current_mp4_path = None
 
-        self._remux_to_mp4(h264_path, mp4_path)
+        # Run the remux on its own thread. This used to run synchronously
+        # right here, which blocked whatever thread called stop() for
+        # however long ffmpeg took -- and stop() is called from gui.py's
+        # hardware loop, the same thread that continuously polls the
+        # camera for AI detections. Blocking that thread for several
+        # seconds right as a clip finishes is the strongest suspect for
+        # the AI-channel stalls that were observed to coincide exactly
+        # with a clip becoming available in the Review Queue.
+        threading.Thread(
+            target=self._remux_to_mp4,
+            args=(h264_path, mp4_path),
+            daemon=True,
+        ).start()
 
-        print("Recording stopped cleanly (pre-event footage included).")
+        print("Recording stopped cleanly (pre-event footage included); remuxing in background.")
 
     def _remux_to_mp4(self, h264_path, mp4_path):
         """

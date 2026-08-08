@@ -86,6 +86,11 @@ class IMX500Camera:
         self.last_detection_time = 0
         self.detection_timeout = 0.75
 
+        # Tracks the last time get_outputs() returned anything at all
+        # (not just a cat) -- used to detect a silent AI-channel stall,
+        # as distinct from simply "no cat in view right now".
+        self._last_ai_output_time = time.time()
+
 
 
     def start(self):
@@ -217,6 +222,13 @@ class IMX500Camera:
             return self.last_detections
 
 
+        # Proves the AI inference channel is alive -- updated regardless of
+        # whether any individual detection clears the confidence threshold,
+        # since an empty-but-fresh result is still evidence the pipeline
+        # is functioning, not stalled.
+        self._last_ai_output_time = time.time()
+
+
 
         boxes = outputs[0]
         scores = outputs[1]
@@ -297,6 +309,15 @@ class IMX500Camera:
         return self.last_detections
 
 
+
+    def seconds_since_last_ai_output(self) -> float:
+        """
+        How long it's been since get_outputs() last returned anything at
+        all (empty or not). A large, sustained value here -- while raw
+        frame capture keeps working fine -- means the AI inference channel
+        specifically has gone silent, not just "no cat visible right now".
+        """
+        return time.time() - self._last_ai_output_time
 
     def get_annotated_frame(self):
         """

@@ -78,6 +78,17 @@ class CatSprayerGUI:
         self._hw_last_success_time = time.time()
         self._hw_stall_logged = False
 
+        # Separate watchdog for a *silent* stall: the AI inference channel
+        # can go quiet (get_outputs() never returns again) without ever
+        # raising a Python exception, since that happens at the libcamera/
+        # hardware layer -- the loop above wouldn't catch this at all on
+        # its own. Checked from the background thread, but the actual
+        # restart is only ever triggered from the main thread (in
+        # update_loop), since Tkinter calls aren't safe to make directly
+        # from a background thread.
+        self.AI_STALL_RESTART_SECONDS = 60
+        self._ai_stall_restart_requested = False
+
         # Spray/Exclusion Zones (each a normalized 0.0-1.0 rect x1,y1,x2,y2).
         # A cat is eligible to trigger the sprayer if it's centered inside at
         # least one spray zone (or there are none, meaning the whole frame
@@ -1052,6 +1063,16 @@ class CatSprayerGUI:
                     )
                     self._hw_stall_logged = False
 
+                if not self._ai_stall_restart_requested:
+                    ai_silence = self.camera.seconds_since_last_ai_output()
+                    if ai_silence >= self.AI_STALL_RESTART_SECONDS:
+                        logger.critical(
+                            "AI inference channel has produced no output in %.0fs "
+                            "(camera/frames otherwise fine) -- requesting automatic restart",
+                            ai_silence,
+                        )
+                        self._ai_stall_restart_requested = True
+
                 self._hw_consecutive_errors = 0
                 self._hw_last_success_time = time.time()
 
@@ -1100,6 +1121,11 @@ class CatSprayerGUI:
     def update_loop(self):
         """Lightweight UI draw loop running on the main Tkinter thread."""
         if not self.running:
+            return
+
+        if self._ai_stall_restart_requested:
+            self.restart_requested = True
+            self.quit_application()
             return
 
         # 1. Fetch values safely from the cache

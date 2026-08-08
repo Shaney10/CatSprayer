@@ -77,13 +77,13 @@ spray_duration = 0.5
 confidence_threshold = 0.5
 
 #Number of consecutive detections required before triggering
-required_detections = 4
+required_detections = 2
 
 #Amount of time a cat must remain detected before activation
 trigger_delay = 0.0
 
 #Minimum time between spray activations
-cooldown_time = 0.5
+cooldown_time = 2.5
 
 #Spray zones: list of [x1, y1, x2, y2] rectangles, normalized 0.0-1.0 as a
 #fraction of frame width/height. A cat is eligible to trigger the sprayer
